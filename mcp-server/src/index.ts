@@ -788,7 +788,7 @@ app.get("/api/status", (req, res) => {
 });
 
 app.post("/api/page-visit", async (req, res) => {
-  const { url, title, tabId, isActive, openTabs: extensionOpenTabs } = req.body;
+  const { url, title, isActive, openTabs: extensionOpenTabs } = req.body;
   if (!url) {
     return res.status(400).json({ error: "Missing url parameter" });
   }

@@ -257,7 +257,11 @@ function parseSummaryResponse(text: string, title: string, content: string): { s
   }
 
   return {
-    summary: summary || text.substring(0, 150),
+    summary:
+      summary ||
+      (text.trim()
+        ? text.substring(0, 150)
+        : `Page "${title}": ${content.substring(0, 120)}`),
     topics: topics.length > 0 ? topics : ["general"]
   };
 }
