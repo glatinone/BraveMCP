@@ -25,7 +25,7 @@ import {
   getLastActivePage,
   getRecentlyVisitedPages,
 } from "./storage/database.js";
-import { initChroma } from "./storage/chroma.js";
+import { initChroma, isChromaConnected } from "./storage/chroma.js";
 import {
   summarizeContent,
   generateGroupSummary,
@@ -246,6 +246,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
+  try {
   switch (name) {
     case "get_open_tabs": {
       // Prefer in-memory (live from extension), fall back to SQLite (last 4 hours)
@@ -776,6 +777,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+  } catch (err) {
+    // Any uncaught error from a tool handler is returned to Claude as a
+    // readable tool-execution error instead of a raw JSON-RPC protocol error.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Tool "${name}" failed:`, message);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `⚠️ Tool "${name}" could not complete: ${message}`,
+        },
+      ],
+      isError: true,
+    };
+  }
 });
 
 // Setup Express HTTP Bridge
@@ -783,8 +799,47 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-app.get("/api/status", (req, res) => {
-  res.json({ status: "ok" });
+// Lightweight reachability check used by the health endpoint.
+async function pingHttp(url: string, timeoutMs = 1000): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+app.get("/api/status", async (_req, res) => {
+  const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+
+  // SQLite is in-process — verify with a trivial query.
+  let sqlite = false;
+  try {
+    db.prepare("SELECT 1").get();
+    sqlite = true;
+  } catch {
+    sqlite = false;
+  }
+
+  // ChromaDB heartbeat moved path across versions; try v2 then v1.
+  const [chromaV2, ollama] = await Promise.all([
+    pingHttp("http://localhost:8000/api/v2/heartbeat"),
+    pingHttp(`${ollamaUrl}/api/tags`),
+  ]);
+  const chromadb = chromaV2 || (await pingHttp("http://localhost:8000/api/v1/heartbeat")) || isChromaConnected();
+
+  res.json({
+    status: "ok",
+    services: {
+      sqlite,
+      chromadb,
+      ollama,
+    },
+    timestamp: Date.now(),
+  });
 });
 
 app.post("/api/page-visit", async (req, res) => {
