@@ -8,6 +8,8 @@ BraveMCP is a local-first browser memory system that captures browsing history, 
 ### MCP Server (`/mcp-server`)
 - Install dependencies: `npm install`
 - Run development server (live TS execution): `npm run dev`
+- Type-check: `npm run typecheck`
+- Lint: `npm run lint`
 - Build TypeScript files: `npm run build`
 - Start built server: `npm run start`
 
@@ -23,7 +25,7 @@ To connect this local MCP server to Claude Desktop, add the following configurat
     "brave-memory": {
       "command": "node",
       "args": [
-        "D:/50_Projects/01_Projects/BraveMCP/mcp-server/dist/index.js"
+        "/absolute/path/to/BraveMCP/mcp-server/dist/index.js"
       ]
     }
   }
@@ -49,5 +51,5 @@ This is handled by design using the following flow:
 - [x] **Phase 2: SQLite Storage Layer** — Done
 - [x] **Phase 3: Browser Extension (Manifest V3)** — Done
 - [x] **Phase 4: Vector Search + AI Pipeline** — Done
-- [ ] **Phase 5: Advanced Tools + Digests** — Pending
-- [ ] **Phase 6: Polish + GitHub Release** — Pending
+- [x] **Phase 5: Advanced Tools + Digests** — Done
+- [x] **Phase 6: Polish + GitHub Release** — Done
