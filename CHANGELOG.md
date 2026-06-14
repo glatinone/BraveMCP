@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Demo Visual**: Self-contained SVG mockup of a Claude conversation embedded in the README, plus `docs/RECORDING.md` with instructions for recording a real GIF.
+- **ESLint**: Flat-config ESLint 9 + typescript-eslint setup with `npm run lint` and `npm run typecheck` scripts; CI now runs type-check and lint before build.
+- **Health Check**: `/api/status` now reports live SQLite, ChromaDB, and Ollama reachability instead of a static `ok`.
+
+### Changed
+- **AI Fallbacks**: When no LLM is available, `summarize_open_tabs`, `summarize_research_topic`, and `generate_weekly_digest` now build genuine extractive summaries from real data (domain grouping, source listings, data-driven digests) instead of returning canned text.
+- **Docs**: Rewrote the README for clarity; cleaned up CONTRIBUTING and CLAUDE.md; moved the internal Antigravity master prompt into `docs/`.
+
+### Fixed
+- **MCP stdio**: Pinned dotenv to v16 to stop stdout pollution that corrupted the JSON-RPC channel.
+- **Dual-process state**: Tab-dependent tools fall back to SQLite when in-memory extension state is empty; the second server instance no longer crashes on a port conflict.
+- **Error handling**: Tool handlers now return readable tool-execution errors to Claude instead of raw protocol errors.
+
 ## [0.1.0] - 2026-06-14
 
 ### Added
