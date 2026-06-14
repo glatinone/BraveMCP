@@ -1,139 +1,181 @@
-# BraveMCP — Local Browser Memory System for Claude Desktop
+# BraveMCP — Your Browser Memory, Accessible by Claude
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Release Version](https://img.shields.io/badge/version-v0.1.0-emerald.svg)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/local--first-yes-violet.svg)](#)
-[![Model Context Protocol](https://img.shields.io/badge/MCP-compliant-orange.svg)](https://modelcontextprotocol.io)
+[![Version](https://img.shields.io/badge/version-v0.1.0-green.svg)](CHANGELOG.md)
+[![Local First](https://img.shields.io/badge/local--first-yes-violet.svg)](#)
+[![MCP Compliant](https://img.shields.io/badge/MCP-compliant-orange.svg)](https://modelcontextprotocol.io)
 
-BraveMCP is a local-first browser extension and Model Context Protocol (MCP) server that turns your web browsing activity (pages visited, bookmarks, text highlights, manual notes) into a searchable "second brain", accessible natively by Claude Desktop.
+**BraveMCP** is a local-first browser extension + MCP server that captures everything you browse — pages, bookmarks, highlights, notes — and makes it searchable by Claude Desktop as a personal "second brain."
+
+> Everything stays on your machine. No cloud. No tracking. Just your own memory, given to Claude.
 
 ---
 
-## Architecture
+## What It Does
+
+| Without BraveMCP | With BraveMCP |
+|---|---|
+| "I don't have access to your history" | Claude searches your browsing history directly |
+| You copy-paste URLs manually | Extension auto-captures pages as you browse |
+| Forgotten tabs lost forever | Time-decay search resurfaces what you forgot |
+| Manual research summaries | Claude synthesizes your sessions automatically |
+
+### Example
+
+> **You:** "Do you remember that article about MCP security I read last week?"
+>
+> **Claude:** *(calls `find_forgotten_content`)* → "Yes — you visited **MCP Security Guidelines** 4 days ago, 3 times. It covers sandbox credential handling and shell injection prevention. Want a summary?"
+
+---
+
+## How It Works
 
 ```
-[Brave Browser] → [Extension] → [HTTP Bridge :3747] → [MCP Server] → [Claude Desktop]
+Brave Browser
+    ↓ (tab visits, bookmarks, highlights)
+Extension (Manifest V3)
+    ↓ POST /api/...
+HTTP Bridge (Express :3747)
+    ↓
+MCP Server ←→ SQLite + ChromaDB
+    ↓ stdio JSON-RPC
+Claude Desktop
 ```
 
-- **Browser Extension**: Manifest V3 extension captures tab changes, bookmarks, and text highlights.
-- **HTTP Bridge**: Runs an Express listener on port `3747` in the background of the MCP server process to receive extension payloads.
-- **Storage Layer**: SQLite for structured records and notes; ChromaDB for local vector embeddings.
-- **AI Pipeline**: Ollama (local models) or Anthropic API for generating page summaries, active research topic syntheses, and vector embeddings.
-- **MCP Server**: Exposes tools to Claude Desktop over stdio for exploring your memory.
+- **Extension** — Manifest V3. Auto-captures tab changes, bookmarks, and context-menu text highlights.
+- **HTTP Bridge** — Express server on port `3747`, runs inside the MCP server process to receive extension payloads.
+- **Storage** — SQLite (FTS5 full-text search) + ChromaDB (local vector embeddings). Nothing leaves your machine.
+- **AI Pipeline** — Ollama (`llama3.2` / `nomic-embed-text`) for local summarization and embeddings, with Anthropic API as fallback.
+- **MCP Server** — Exposes 13 tools to Claude Desktop over stdio.
 
 ---
 
-## ⚖️ BraveMCP vs Notion Web Clipper
+## Quick Start
 
-| Feature | Notion Web Clipper | BraveMCP |
-| --- | --- | --- |
-| **Data Privacy** | Cloud-based (Notion servers) | 🔒 **100% Local-first** (SQLite + ChromaDB) |
-| **Search Method** | Keyword only (Notion Search) | 🧠 **Hybrid Search** (Keyword FTS5 + semantic vector similarity) |
-| **Access by AI** | None | 🔌 **Native MCP interface** (Claude Desktop reads it directly) |
-| **Automatic tracking** | Manual clip only | ⚙️ **Auto tab-sync + context menu selection highlights** |
-| **Research Synthesis** | None | 📚 **Auto-clusters research sessions + weekly digest generation** |
+### Prerequisites
 
----
+- [Node.js](https://nodejs.org/) v18+
+- [Brave](https://brave.com/) or Chrome browser
+- [Claude Desktop](https://claude.ai/download)
+- *(Optional)* [Ollama](https://ollama.com/) for local AI — `ollama pull llama3.2 && ollama pull nomic-embed-text`
+- *(Optional)* Python 3.10+ for ChromaDB vector search — `pip install chromadb`
 
-## 💡 Demo Scenario (How Claude Uses BraveMCP)
+### Install
 
-Here is a look at how Claude retrieves forgotten information from your second brain.
-
-### Before (Without BraveMCP)
-> **User**: "Hey Claude, do you remember that article I read a few days ago about some new protocol security hardening?"
->
-> **Claude**: "I'm sorry, I don't have access to your browsing history or past activities. Could you provide the name of the protocol or share the text?"
-
-### After (With BraveMCP)
-> **User**: "Hey Claude, do you remember that article I read a few days ago about some new protocol security hardening?"
->
-> **Claude**: *(Calls `find_forgotten_content(vague_description: "protocol security hardening")`)*
->
-> **BraveMCP Server**: *(Returns hybrid search matches adjusted by time-decay and visit boosting)*
-> ```json
-> [
->   {
->     "url": "https://modelcontextprotocol.io/docs/security",
->     "title": "Model Context Protocol Security Guidelines",
->     "summary": "This document outlines standard security rules for MCP hosts and clients to prevent shell injection and handle sandbox credentials securely.",
->     "adjusted_relevance": 0.94,
->     "visit_count": 3,
->     "last_visited_days_ago": 4.2
->   }
-> ]
-> ```
->
-> **Claude**: "Yes, you visited the **Model Context Protocol Security Guidelines** (https://modelcontextprotocol.io/docs/security) 4 days ago. You opened it 3 times. The article outlines how hosts and clients can prevent shell injection and handle sandbox credentials safely. Would you like me to summarize those security principles?"
-
----
-
-## Installation & Setup
-
-### 1. Prerequisites
-- [Node.js](https://nodejs.org/) (v18+)
-- [Python 3.10+](https://www.python.org/) (required to run ChromaDB locally)
-- [Ollama](https://ollama.com/) (required to run AI models locally: install the `nomic-embed-text` and `llama3.2` models)
-
-### 2. Git Initialization
-If you are running this project from a local directory, initialize the git repository first:
 ```bash
-git init
-git add .
-git commit -m "feat: initial BraveMCP release v0.1.0"
-```
-
-### 3. Run Setup Command
-BraveMCP includes a root setup command that installs server dependencies, builds TypeScript code, and verifies ports:
-```bash
+git clone https://github.com/YOUR_USERNAME/BraveMCP.git
+cd BraveMCP
 npm run setup
 ```
 
-### 4. Running ChromaDB
-Start the vector database locally by running:
-```bash
-pip install chromadb
-chroma run --path ./storage/chroma
-```
-ChromaDB will listen at `http://localhost:8000`.
+`npm run setup` handles everything: installs dependencies, builds TypeScript, and checks ports.
 
-### 5. Configure Claude Desktop Integration
-Link the MCP server to Claude Desktop by adding the server config details to your `claude_desktop_config.json` (located at `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+### Connect to Claude Desktop
+
+Add this to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
   "mcpServers": {
     "brave-memory": {
       "command": "node",
-      "args": [
-        "D:/50_Projects/01_Projects/BraveMCP/mcp-server/dist/index.js"
-      ]
+      "args": ["/absolute/path/to/BraveMCP/mcp-server/dist/index.js"]
     }
   }
 }
 ```
 
-Restart Claude Desktop after adding these configurations.
+Restart Claude Desktop.
 
-### 6. Load Browser Extension
-- Open Brave or Chrome at `chrome://extensions/`.
-- Toggle **Developer mode** on in the top-right corner.
-- Click **Load unpacked** and select the `/extension` directory in this project root.
+### Load the Browser Extension
+
+1. Open `brave://extensions` (or `chrome://extensions`)
+2. Enable **Developer mode**
+3. Click **Load unpacked** → select the `/extension` folder
+
+### (Optional) Start ChromaDB for Semantic Search
+
+```bash
+pip install chromadb
+chroma run --path ./storage/chroma
+```
+
+ChromaDB runs at `http://localhost:8000`. Without it, BraveMCP falls back to SQLite keyword search — still works great.
 
 ---
 
-## Exposed Tools
+## Available MCP Tools
 
-The MCP server implements the following tools:
-1. `get_open_tabs` - Get list of open browser tabs (synchronized from extension).
-2. `get_active_tab` - Get current active browser tab.
-3. `get_bookmarks` - Retrieve browser bookmarks.
-4. `search_memory` / `find_related_content` - Search notes and page summaries using hybrid search (combining SQLite FTS5 keywords and ChromaDB semantic vector matching).
-5. `capture_current_page` - Capture page content. Can retrieve the active tab's page content from SQLite or save page content directly.
-6. `save_note` - Save a custom text note.
-7. `save_bookmark` - Save a new bookmark.
-8. `summarize_open_tabs` - Synthesize a topic digest of what you're currently researching in active tabs.
-9. `summarize_research_topic` - Generate a research synthesis of captured history relating to a specific topic.
-10. `get_research_sessions` - Retrieve auto-clustered groups of URLs and page visits grouped by topic.
-11. `generate_weekly_digest` - Generates a markdown weekly summary of all browsing metrics and AI research gaps.
-12. `suggest_tab_cleanup` - Reviews open tabs and suggests cleaning actions (`Close`, `Archive`, `Keep`) based on stats.
-13. `find_forgotten_content` - Performs time-decay and visit-boosted searches for stale items.
+Once connected, Claude can call any of these 13 tools:
+
+| Tool | What it does |
+|------|-------------|
+| `get_open_tabs` | Get your currently open browser tabs |
+| `get_active_tab` | Get the tab you're looking at right now |
+| `get_bookmarks` | Retrieve your saved bookmarks |
+| `search_memory` | Keyword + semantic search across your history |
+| `find_related_content` | Find pages related to a search query |
+| `find_forgotten_content` | Resurface old content using time-decay + visit scoring |
+| `capture_current_page` | Save the active page's content to memory |
+| `save_note` | Save a freeform note |
+| `save_bookmark` | Save a bookmark with a folder |
+| `summarize_open_tabs` | Synthesize what you're currently researching |
+| `summarize_research_topic` | Deep-dive summary on a specific topic from your history |
+| `get_research_sessions` | Auto-clustered browsing sessions by domain/topic |
+| `generate_weekly_digest` | Weekly summary of your browsing and research gaps |
+| `suggest_tab_cleanup` | Recommends tabs to close, archive, or keep |
+
+---
+
+## Page Capture Flow
+
+The extension auto-syncs tab visits in the background. For full page content (text body + AI summary), click **"Capture Content"** in the extension popup. This sends the page body to the MCP server, which stores it in SQLite and generates an AI summary and vector embedding.
+
+Claude can also save a page directly: `capture_current_page(url, title, content, summary)`.
+
+---
+
+## Project Structure
+
+```
+BraveMCP/
+├── extension/              # Manifest V3 browser extension
+│   ├── background.js       # Service worker: tab sync, bookmarks
+│   ├── content.js          # DOM extraction for page capture
+│   ├── manifest.json
+│   └── popup/              # Extension UI
+├── mcp-server/             # Node.js MCP server
+│   ├── src/
+│   │   ├── index.ts        # MCP tools + Express HTTP bridge
+│   │   ├── storage/
+│   │   │   ├── database.ts # SQLite schema, FTS5, migrations
+│   │   │   └── chroma.ts   # ChromaDB client
+│   │   └── ai/
+│   │       └── pipeline.ts # Embeddings + summarization pipeline
+│   └── tsconfig.json
+├── scripts/
+│   └── setup.js            # One-command setup script
+├── storage/                # SQLite DB lives here (git-ignored)
+└── package.json            # Root: runs setup script
+```
+
+---
+
+## Roadmap
+
+- [x] Phase 1 — MCP server scaffold
+- [x] Phase 2 — SQLite storage layer (FTS5, migrations)
+- [x] Phase 3 — Browser extension (Manifest V3)
+- [x] Phase 4 — Vector search + AI pipeline (Ollama / Anthropic fallback)
+- [x] Phase 5 — Advanced tools (digest, sessions, forgotten content, tab cleanup)
+- [ ] Phase 6 — Polish + public release
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+[MIT](LICENSE) — built by Yehezkiel Tampubolon
