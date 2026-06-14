@@ -146,8 +146,8 @@ Please generate a structured synthesis/summary of what the user is currently res
       const data = (await res.json()) as { message: { content: string } };
       return data.message.content.trim();
     } catch (error) {
-      console.error("Failed to generate group summary with Ollama:", error);
-      return "Current research focuses on the open tabs relating to web development and Model Context Protocol.";
+      console.error("Failed to generate group summary with Ollama, using extractive fallback:", error);
+      return extractiveTabSummary(tabsText);
     }
   } else {
     try {
@@ -168,8 +168,8 @@ Please generate a structured synthesis/summary of what the user is currently res
       const data = (await res.json()) as { content: { text: string }[] };
       return data.content[0].text.trim();
     } catch (error) {
-      console.error("Failed to generate group summary with Anthropic:", error);
-      return "Current research focuses on the open tabs relating to web development and Model Context Protocol.";
+      console.error("Failed to generate group summary with Anthropic, using extractive fallback:", error);
+      return extractiveTabSummary(tabsText);
     }
   }
 }
@@ -199,8 +199,8 @@ Please write a comprehensive synthesis of this research topic. Detail the key co
       const data = (await res.json()) as { message: { content: string } };
       return data.message.content.trim();
     } catch (error) {
-      console.error("Failed to generate topic synthesis with Ollama:", error);
-      return `Synthesis on "${topic}": Relies on the gathered browser research database.`;
+      console.error("Failed to generate topic synthesis with Ollama, using extractive fallback:", error);
+      return extractiveTopicSummary(topic, pagesText);
     }
   } else {
     try {
@@ -221,8 +221,8 @@ Please write a comprehensive synthesis of this research topic. Detail the key co
       const data = (await res.json()) as { content: { text: string }[] };
       return data.content[0].text.trim();
     } catch (error) {
-      console.error("Failed to generate topic synthesis with Anthropic:", error);
-      return `Synthesis on "${topic}": Relies on the gathered browser research database.`;
+      console.error("Failed to generate topic synthesis with Anthropic, using extractive fallback:", error);
+      return extractiveTopicSummary(topic, pagesText);
     }
   }
 }
@@ -294,16 +294,8 @@ Format your output in clean Markdown with clear headings.`;
       const data = (await res.json()) as { message: { content: string } };
       return data.message.content.trim();
     } catch (error) {
-      console.error("Failed to generate weekly digest with Ollama:", error);
-      return `### Weekly Research Digest (Fallback)
-Here is what you worked on:
-- Visited various sites.
-- Captured research pages.
-  
-**Questions to explore next**:
-1. What are the key performance considerations of your setup?
-2. How do you plan to scale the storage architecture?
-3. What are the next security hardening steps?`;
+      console.error("Failed to generate weekly digest with Ollama, using extractive fallback:", error);
+      return extractiveWeeklyDigest(statsText, contentSummaryText);
     }
   } else {
     try {
@@ -324,11 +316,8 @@ Here is what you worked on:
       const data = (await res.json()) as { content: { text: string }[] };
       return data.content[0].text.trim();
     } catch (error) {
-      console.error("Failed to generate weekly digest with Anthropic:", error);
-      return `### Weekly Research Digest (Fallback)
-Here is what you worked on:
-- Visited various sites.
-- Captured research pages.`;
+      console.error("Failed to generate weekly digest with Anthropic, using extractive fallback:", error);
+      return extractiveWeeklyDigest(statsText, contentSummaryText);
     }
   }
 }
@@ -429,4 +418,171 @@ function fallbackClustering(pagesText: string): Array<{ name: string; urls: stri
     });
   }
   return sessions;
+}
+
+// ---------------------------------------------------------------------------
+// Extractive (no-LLM) fallbacks
+//
+// When Ollama / Anthropic are unavailable, these build a genuinely useful
+// summary from the real data passed in, instead of returning a canned string.
+// They parse the "- Title: / URL: / Summary:" block format produced by index.ts.
+// ---------------------------------------------------------------------------
+
+interface ParsedEntry {
+  title: string;
+  url: string;
+  summary: string;
+  domain: string;
+}
+
+function parseEntries(text: string): ParsedEntry[] {
+  const entries: ParsedEntry[] = [];
+  let cur: Partial<ParsedEntry> | null = null;
+
+  const flush = () => {
+    if (cur && (cur.title || cur.url)) {
+      let domain = "";
+      try {
+        domain = cur.url ? new URL(cur.url).hostname.replace(/^www\./, "") : "";
+      } catch {
+        domain = "";
+      }
+      entries.push({
+        title: cur.title || "(untitled)",
+        url: cur.url || "",
+        summary: cur.summary || "",
+        domain,
+      });
+    }
+    cur = null;
+  };
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const t = line.match(/^-?\s*Title:\s*(.*)$/i);
+    const u = line.match(/^URL:\s*(.*)$/i);
+    const s = line.match(/^Summary:\s*(.*)$/i);
+    if (t) {
+      flush();
+      cur = { title: t[1].trim() };
+    } else if (u && cur) {
+      cur.url = u[1].trim();
+    } else if (s && cur) {
+      cur.summary = s[1].trim();
+    }
+  }
+  flush();
+  return entries;
+}
+
+function groupByDomain(entries: ParsedEntry[]): Map<string, ParsedEntry[]> {
+  const map = new Map<string, ParsedEntry[]>();
+  for (const e of entries) {
+    const key = e.domain || "other";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(e);
+  }
+  return map;
+}
+
+const NO_LLM_TAG = "_(generated without LLM — extractive summary)_";
+
+export function extractiveTabSummary(tabsText: string): string {
+  const entries = parseEntries(tabsText);
+  if (entries.length === 0) return "No open tabs available to summarize.";
+
+  const byDomain = groupByDomain(entries);
+  const ranked = [...byDomain.entries()].sort((a, b) => b[1].length - a[1].length);
+  const focus = ranked.slice(0, 3).map(([domain, es]) => {
+    const titles = es.slice(0, 3).map(e => e.title).join("; ");
+    return `- **${domain}** (${es.length} ${es.length === 1 ? "page" : "pages"}: ${titles})`;
+  });
+
+  return [
+    `You currently have **${entries.length} tabs** open across **${byDomain.size} ${byDomain.size === 1 ? "site" : "sites"}**.`,
+    ``,
+    `Main focus areas:`,
+    ...focus,
+    ``,
+    NO_LLM_TAG,
+  ].join("\n");
+}
+
+export function extractiveTopicSummary(topic: string, pagesText: string): string {
+  const entries = parseEntries(pagesText);
+  if (entries.length === 0) return `No captured pages found for "${topic}".`;
+
+  const byDomain = groupByDomain(entries);
+  const sources = entries.slice(0, 8).map(e => {
+    const snippet = e.summary
+      ? ` — ${e.summary.substring(0, 140)}${e.summary.length > 140 ? "…" : ""}`
+      : "";
+    return `- **${e.title}** (${e.domain || e.url})${snippet}`;
+  });
+
+  return [
+    `### Research synthesis: "${topic}"`,
+    ``,
+    `Found **${entries.length} ${entries.length === 1 ? "source" : "sources"}** across **${byDomain.size} ${byDomain.size === 1 ? "domain" : "domains"}** (${[...byDomain.keys()].join(", ")}).`,
+    ``,
+    `**Sources:**`,
+    ...sources,
+    ``,
+    NO_LLM_TAG,
+  ].join("\n");
+}
+
+function parseContentItems(text: string): string[] {
+  const items: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const p = line.match(/^-\s*Page:\s*(.*)$/i);
+    const n = line.match(/^-\s*Note:\s*(.*)$/i);
+    if (p) items.push(`Page: ${p[1].trim()}`);
+    else if (n) items.push(`Note: ${n[1].trim()}`);
+  }
+  return items;
+}
+
+function deriveDigestQuestions(topDomains: string): string[] {
+  const names = topDomains
+    .split(",")
+    .map(d => d.replace(/\(.*?\)/g, "").trim())
+    .filter(Boolean);
+  const qs: string[] = [];
+  if (names[0]) qs.push(`You spent the most time on ${names[0]} — is there a related topic worth a deeper dive?`);
+  if (names[1]) qs.push(`How do your findings from ${names[1]} connect to the rest of this week's research?`);
+  qs.push(`Which of these pages is worth turning into a permanent note or bookmark?`);
+  return qs.slice(0, 3);
+}
+
+export function extractiveWeeklyDigest(statsText: string, contentSummaryText: string): string {
+  const items = parseContentItems(contentSummaryText);
+  const domainsMatch = statsText.match(/Most Active Domains:\s*(.*)/i);
+  const topDomains = domainsMatch ? domainsMatch[1].trim() : "";
+
+  const captures = items.length
+    ? items.slice(0, 5).map(i => `- ${i}`)
+    : ["- No detailed page summaries captured this week."];
+  const questions = deriveDigestQuestions(topDomains);
+
+  return [
+    `### 📊 Weekly Research Digest`,
+    ``,
+    `**Activity Summary**`,
+    statsText,
+    ``,
+    `**Major Themes**`,
+    topDomains && topDomains !== "None"
+      ? `Your activity clustered around: ${topDomains}.`
+      : `Not enough domain data to cluster themes yet.`,
+    ``,
+    `**Recent Captures**`,
+    ...captures,
+    ``,
+    `**Questions to explore next**`,
+    ...questions.map((q, i) => `${i + 1}. ${q}`),
+    ``,
+    `_(generated without LLM — extractive digest)_`,
+  ].join("\n");
 }
