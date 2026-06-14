@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "BraveMCP",
+  "version": "0.1.0",
+  "description": "Local Browser Memory system that connects browsing activity to Claude Desktop via MCP.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "bookmarks",
+    "storage",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://localhost:3747/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}

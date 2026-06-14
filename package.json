@@ -1,0 +1,10 @@
+{
+  "name": "brave-mcp-root",
+  "version": "0.1.0",
+  "description": "BraveMCP Root Orchestrator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.js"
+  }
+}

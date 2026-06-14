@@ -1,0 +1,7 @@
+node_modules/
+dist/
+scratch/
+*.db
+*.log
+.env
+.env.local
