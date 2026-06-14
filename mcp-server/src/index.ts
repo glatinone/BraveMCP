@@ -22,6 +22,8 @@ import {
   getRecentNotes,
   saveResearchSession,
   getResearchSessions,
+  getLastActivePage,
+  getRecentlyVisitedPages,
 } from "./storage/database.js";
 import { initChroma } from "./storage/chroma.js";
 import {
@@ -245,29 +247,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
-    case "get_open_tabs":
+    case "get_open_tabs": {
+      // Prefer in-memory (live from extension), fall back to SQLite (last 4 hours)
+      const tabs = openTabs.length > 0 ? openTabs : getRecentlyVisitedPages();
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(openTabs, null, 2),
+            text: JSON.stringify(tabs, null, 2),
           },
         ],
       };
+    }
 
-    case "get_active_tab":
+    case "get_active_tab": {
+      // Prefer in-memory (live from extension), fall back to SQLite (most recent)
+      const tab = activeTab ?? getLastActivePage() ?? { url: "", title: "No active tab detected" };
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              activeTab || { url: "", title: "No active tab detected" },
-              null,
-              2
-            ),
+            text: JSON.stringify(tab, null, 2),
           },
         ],
       };
+    }
 
     case "get_bookmarks": {
       const bookmarks = getBookmarks();
@@ -422,7 +426,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "summarize_open_tabs": {
-      if (openTabs.length === 0) {
+      const activeTabs = openTabs.length > 0 ? openTabs : getRecentlyVisitedPages();
+      if (activeTabs.length === 0) {
         return {
           content: [
             {
@@ -434,7 +439,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       let tabsText = "";
-      for (const tab of openTabs) {
+      for (const tab of activeTabs) {
         const page = getPageContent(tab.url);
         const summaryText = page?.summary || "No summary available. Page has not been captured yet.";
         tabsText += `- Title: ${tab.title}\n  URL: ${tab.url}\n  Summary: ${summaryText}\n\n`;
@@ -647,7 +652,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "suggest_tab_cleanup": {
-      if (openTabs.length === 0) {
+      const tabsForCleanup = openTabs.length > 0 ? openTabs : getRecentlyVisitedPages();
+      if (tabsForCleanup.length === 0) {
         return {
           content: [
             {
@@ -661,7 +667,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const suggestions = [];
       const now = Date.now();
 
-      for (const tab of openTabs) {
+      for (const tab of tabsForCleanup) {
         const page = getPageContent(tab.url);
         
         let action = "Keep";
@@ -877,8 +883,15 @@ async function main() {
   await initChroma();
 
   const HTTP_PORT = 3747;
-  app.listen(HTTP_PORT, () => {
+  const httpServer = app.listen(HTTP_PORT, () => {
     console.error(`HTTP Bridge listening on http://localhost:${HTTP_PORT}`);
+  });
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`Port ${HTTP_PORT} already in use — HTTP bridge disabled. Extension sync will route to the primary instance.`);
+    } else {
+      console.error("HTTP Bridge error:", err);
+    }
   });
 
   const transport = new StdioServerTransport();
