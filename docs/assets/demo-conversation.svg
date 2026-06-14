@@ -1,0 +1,69 @@
+<svg width="760" height="660" viewBox="0 0 760 660" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f1d2b"/>
+      <stop offset="1" stop-color="#17151f"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- window -->
+  <rect x="0" y="0" width="760" height="660" rx="16" fill="url(#bg)"/>
+
+  <!-- title bar -->
+  <g>
+    <circle cx="28" cy="28" r="6" fill="#ff5f57"/>
+    <circle cx="48" cy="28" r="6" fill="#febc2e"/>
+    <circle cx="68" cy="28" r="6" fill="#28c840"/>
+    <text x="380" y="33" fill="#8b8898" font-size="13" text-anchor="middle" font-weight="500">BraveMCP · Claude Desktop</text>
+    <line x1="0" y1="56" x2="760" y2="56" stroke="#2c2a3a" stroke-width="1"/>
+  </g>
+
+  <!-- user message -->
+  <g filter="url(#shadow)">
+    <rect x="230" y="80" width="500" height="58" rx="14" fill="#6c5ce7"/>
+  </g>
+  <text x="252" y="106" fill="#ffffff" font-size="14">Do you remember that article about MCP security</text>
+  <text x="252" y="126" fill="#ffffff" font-size="14">I read last week?</text>
+  <text x="708" y="156" fill="#6b6878" font-size="11" text-anchor="end">You</text>
+
+  <!-- claude avatar + tool call -->
+  <circle cx="46" cy="196" r="16" fill="#d97757"/>
+  <text x="46" y="201" fill="#ffffff" font-size="14" text-anchor="middle" font-weight="700">C</text>
+
+  <g filter="url(#shadow)">
+    <rect x="74" y="180" width="420" height="44" rx="12" fill="#252336" stroke="#3a3750" stroke-width="1"/>
+  </g>
+  <text x="92" y="200" fill="#9d8df1" font-size="12" font-weight="600">⚙ calling tool</text>
+  <text x="92" y="216" fill="#cfcce0" font-size="12.5" font-family="'SF Mono', Menlo, Consolas, monospace">find_forgotten_content("MCP security hardening")</text>
+
+  <!-- result card -->
+  <g filter="url(#shadow)">
+    <rect x="74" y="238" width="620" height="150" rx="12" fill="#1b1926" stroke="#2f2c40" stroke-width="1"/>
+  </g>
+  <text x="92" y="262" fill="#5fd0c5" font-size="11" font-weight="700" letter-spacing="0.5">MATCH FOUND · adjusted_relevance 0.94</text>
+  <text x="92" y="288" fill="#e8e6f0" font-size="13.5" font-weight="600">Model Context Protocol — Security Guidelines</text>
+  <text x="92" y="308" fill="#7b7890" font-size="11.5" font-family="'SF Mono', Menlo, Consolas, monospace">modelcontextprotocol.io/docs/security</text>
+  <text x="92" y="332" fill="#b8b5c8" font-size="12.5">Outlines how hosts and clients prevent shell injection and</text>
+  <text x="92" y="350" fill="#b8b5c8" font-size="12.5">handle sandbox credentials securely.</text>
+  <g>
+    <rect x="92" y="362" width="116" height="20" rx="10" fill="#2a2838"/>
+    <text x="150" y="376" fill="#9d8df1" font-size="10.5" text-anchor="middle">visited 3× · 4 days ago</text>
+  </g>
+
+  <!-- claude final answer -->
+  <circle cx="46" cy="424" r="16" fill="#d97757"/>
+  <text x="46" y="429" fill="#ffffff" font-size="14" text-anchor="middle" font-weight="700">C</text>
+  <g filter="url(#shadow)">
+    <rect x="74" y="408" width="620" height="200" rx="14" fill="#252336"/>
+  </g>
+  <text x="96" y="438" fill="#e8e6f0" font-size="14">Yes — you visited the <tspan font-weight="700" fill="#ffffff">MCP Security</tspan></text>
+  <text x="96" y="460" fill="#e8e6f0" font-size="14"><tspan font-weight="700" fill="#ffffff">Guidelines</tspan> 4 days ago, and opened it 3 times.</text>
+  <text x="96" y="488" fill="#e8e6f0" font-size="14">It covers sandbox credential handling and shell</text>
+  <text x="96" y="510" fill="#e8e6f0" font-size="14">injection prevention.</text>
+  <text x="96" y="544" fill="#b8b5c8" font-size="13.5">Want me to summarize those security principles for</text>
+  <text x="96" y="564" fill="#b8b5c8" font-size="13.5">you?</text>
+  <text x="96" y="594" fill="#5fd0c5" font-size="12">🧠 retrieved from your local browser memory · 100% offline</text>
+</svg>

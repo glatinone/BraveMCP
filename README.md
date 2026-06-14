@@ -11,6 +11,18 @@
 
 ---
 
+## Demo
+
+<!-- To use a real screen recording, record per docs/RECORDING.md, save it to
+     docs/assets/demo.gif, and uncomment the line below (it takes priority). -->
+<!-- ![BraveMCP demo](docs/assets/demo.gif) -->
+
+![BraveMCP — Claude retrieving a forgotten page from local browser memory](docs/assets/demo-conversation.svg)
+
+*Claude answers a vague "do you remember…" question by searching your local browser memory — fully offline. A real screen-recorded GIF can replace this mockup; see [docs/RECORDING.md](docs/RECORDING.md).*
+
+---
+
 ## What It Does
 
 | Without BraveMCP | With BraveMCP |
