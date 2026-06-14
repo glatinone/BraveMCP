@@ -573,3 +573,23 @@ export function getResearchSessions() {
     ended_at: row.ended_at as number | null
   }));
 }
+
+// Get the most recently visited page (proxy for active tab)
+export function getLastActivePage() {
+  return db.prepare(`
+    SELECT url, title FROM pages
+    ORDER BY last_visited DESC
+    LIMIT 1
+  `).get() as { url: string; title: string } | undefined;
+}
+
+// Get pages visited in the last 4 hours (proxy for open tabs)
+export function getRecentlyVisitedPages() {
+  const cutoff = Date.now() - (4 * 60 * 60 * 1000);
+  return db.prepare(`
+    SELECT url, title, last_visited as tabId FROM pages
+    WHERE last_visited >= ?
+    ORDER BY last_visited DESC
+    LIMIT 20
+  `).all(cutoff) as Array<{ url: string; title: string; tabId: number }>;
+}
