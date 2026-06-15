@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Test Suite**: Automated tests via Node's built-in test runner (run with tsx, no new deps) covering the extractive AI summaries and the SQLite storage layer (temp-DB isolated). CI runs `npm test` after build on Node 20.
 - **Demo Visual**: Self-contained SVG mockup of a Claude conversation embedded in the README, plus `docs/RECORDING.md` with instructions for recording a real GIF.
 - **ESLint**: Flat-config ESLint 9 + typescript-eslint setup with `npm run lint` and `npm run typecheck` scripts; CI now runs type-check and lint before build.
 - **Health Check**: `/api/status` now reports live SQLite, ChromaDB, and Ollama reachability instead of a static `ok`.
