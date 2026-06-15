@@ -11,6 +11,9 @@ const btnSaveNote = document.getElementById("btn-save-note");
 const noteContentEl = document.getElementById("note-content");
 const captureFeedback = document.getElementById("capture-feedback");
 const noteFeedback = document.getElementById("note-feedback");
+const btnGroupTabs = document.getElementById("btn-group-tabs");
+const btnUndoGrouping = document.getElementById("btn-undo-grouping");
+const groupFeedback = document.getElementById("group-feedback");
 
 // Check connection to HTTP Bridge
 async function checkConnection() {
@@ -22,6 +25,7 @@ async function checkConnection() {
       statusText.textContent = "Online";
       btnCapture.disabled = !activeTab;
       btnSaveNote.disabled = false;
+      btnGroupTabs.disabled = false;
       return true;
     }
   } catch (error) {
@@ -32,6 +36,7 @@ async function checkConnection() {
   statusText.textContent = "Offline";
   btnCapture.disabled = true;
   btnSaveNote.disabled = true;
+  btnGroupTabs.disabled = true;
   return false;
 }
 
@@ -74,6 +79,12 @@ async function init() {
 
   // Check connection status
   await checkConnection();
+
+  chrome.runtime.sendMessage({ action: "check_group_state" }, (response) => {
+    if (response && response.hasGroups) {
+      btnUndoGrouping.style.display = "block";
+    }
+  });
 }
 
 // Capture current page content
@@ -176,6 +187,44 @@ btnSaveNote.addEventListener("click", async () => {
 
   btnSaveNote.disabled = false;
   btnSaveNote.textContent = "Save Note";
+});
+
+btnGroupTabs.addEventListener("click", () => {
+  btnGroupTabs.disabled = true;
+  btnGroupTabs.textContent = "Grouping...";
+
+  chrome.runtime.sendMessage({ action: "auto_group_tabs" }, (response) => {
+    btnGroupTabs.disabled = false;
+    btnGroupTabs.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 6h16M4 10h16M4 14h8M4 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      Auto-Group Tabs`;
+
+    if (response && response.status === "done") {
+      showFeedback(groupFeedback, `Grouped into ${response.groupCount} clusters!`);
+      btnUndoGrouping.style.display = "block";
+    } else {
+      showFeedback(groupFeedback, response?.message || "Grouping failed.", true);
+    }
+  });
+});
+
+btnUndoGrouping.addEventListener("click", () => {
+  btnUndoGrouping.disabled = true;
+  btnUndoGrouping.textContent = "Undoing...";
+
+  chrome.runtime.sendMessage({ action: "undo_grouping" }, (response) => {
+    btnUndoGrouping.disabled = false;
+    btnUndoGrouping.textContent = "Undo Grouping";
+
+    if (response && response.status === "done") {
+      btnUndoGrouping.style.display = "none";
+      showFeedback(groupFeedback, "Grouping undone.");
+    } else {
+      showFeedback(groupFeedback, response?.message || "Undo failed.", true);
+    }
+  });
 });
 
 // Run init
