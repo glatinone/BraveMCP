@@ -140,6 +140,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tabs })
         });
+        // Fix (Important 3): surface HTTP-level errors before trying to parse JSON
+        if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
         const data = await res.json();
 
         if (!data.groups || data.groups.length === 0) {
@@ -150,17 +152,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const allGroupedTabIds = [];
         for (const group of data.groups) {
           if (!group.tabIds || group.tabIds.length === 0) continue;
-          // Use the windowId of the first tab in the group to avoid cross-window errors
           const firstTab = allTabs.find(t => t.id === group.tabIds[0]);
+          // Fix (Critical 1): keep only tabs that exist in the snapshot AND share the
+          // same window as the first tab — chrome.tabs.group() throws if tabIds span
+          // multiple windows, and createProperties.windowId does NOT coerce them.
+          const validTabIds = group.tabIds.filter(id => {
+            const t = allTabs.find(t => t.id === id);
+            return t !== undefined && t.windowId === firstTab?.windowId;
+          });
+          if (validTabIds.length === 0) continue;
           const groupOptions = firstTab?.windowId !== undefined
-            ? { tabIds: group.tabIds, createProperties: { windowId: firstTab.windowId } }
-            : { tabIds: group.tabIds };
+            ? { tabIds: validTabIds, createProperties: { windowId: firstTab.windowId } }
+            : { tabIds: validTabIds };
           const groupId = await chrome.tabs.group(groupOptions);
           await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
-          allGroupedTabIds.push(...group.tabIds);
+          allGroupedTabIds.push(...validTabIds);
+          // Fix (Critical 2): persist undo state after each successful group so that a
+          // mid-loop failure still leaves undo data for the groups that succeeded.
+          await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
         }
 
-        await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
         sendResponse({ status: "done", groupCount: data.groups.length });
       } catch (err) {
         console.error("auto_group_tabs failed:", err);
@@ -174,11 +185,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const stored = await chrome.storage.session.get("groupedTabIds");
-        const tabIds = stored.groupedTabIds || [];
-        if (tabIds.length > 0) {
-          await chrome.tabs.ungroup(tabIds);
-        }
+        const allTabIds = stored.groupedTabIds || [];
+        // Fix (Important 4): clear storage FIRST so a partial failure below never
+        // leaves stale IDs that would make future undo attempts throw again.
         await chrome.storage.session.remove("groupedTabIds");
+        if (allTabIds.length > 0) {
+          // Filter to tabs that are still open — chrome.tabs.ungroup() throws on
+          // any invalid ID, so passing a closed tab's ID would abort the whole call.
+          const liveTabs = await chrome.tabs.query({});
+          const liveIds = new Set(liveTabs.map(t => t.id));
+          const validIds = allTabIds.filter(id => liveIds.has(id));
+          if (validIds.length > 0) {
+            await chrome.tabs.ungroup(validIds);
+          }
+        }
         sendResponse({ status: "done" });
       } catch (err) {
         console.error("undo_grouping failed:", err);
