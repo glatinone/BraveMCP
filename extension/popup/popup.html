@@ -157,6 +157,21 @@
       transform: none;
     }
 
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--card-border);
+      box-shadow: none;
+      margin-top: 8px;
+    }
+
+    .btn-secondary:hover {
+      background: var(--card-bg);
+      color: var(--text);
+      box-shadow: none;
+      transform: none;
+    }
+
     .input-group {
       display: flex;
       flex-direction: column;
@@ -249,6 +264,20 @@
       <button id="btn-save-note" class="btn" disabled>Save Note</button>
       <div id="note-feedback" class="feedback"></div>
     </div>
+  </div>
+
+  <div class="section">
+    <h3 class="section-title">Tab Groups</h3>
+    <button id="btn-group-tabs" class="btn" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 6h16M4 10h16M4 14h8M4 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      Auto-Group Tabs
+    </button>
+    <div id="group-feedback" class="feedback"></div>
+    <button id="btn-undo-grouping" class="btn btn-secondary" style="display:none;">
+      Undo Grouping
+    </button>
   </div>
 
   <div class="footer">
