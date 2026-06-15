@@ -1,0 +1,59 @@
+<svg width="1000" height="540" viewBox="0 0 1000 540" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" role="img">
+  <title>Before and after BraveMCP: Claude goes from no memory to recalling what you browsed</title>
+
+  <rect width="1000" height="540" fill="#13111b"/>
+
+  <!-- headline -->
+  <text x="500" y="62" fill="#ffffff" font-size="32" font-weight="800" text-anchor="middle">What if Claude remembered everything you read?</text>
+  <rect x="430" y="82" width="140" height="4" rx="2" fill="#5fd0c5"/>
+
+  <!-- ===== BEFORE panel ===== -->
+  <g>
+    <rect x="40" y="120" width="445" height="380" rx="18" fill="#1c1a29" stroke="#3a2b30" stroke-width="1.5"/>
+    <rect x="64" y="146" width="92" height="28" rx="14" fill="#3a2329"/>
+    <text x="110" y="165" fill="#ff7a7a" font-size="14" font-weight="700" text-anchor="middle">BEFORE</text>
+
+    <!-- user bubble -->
+    <rect x="150" y="196" width="312" height="62" rx="13" fill="#2a2838"/>
+    <text x="170" y="222" fill="#e8e6f0" font-size="14">Remember that article on MCP security</text>
+    <text x="170" y="242" fill="#e8e6f0" font-size="14">I read last week?</text>
+
+    <!-- claude bubble -->
+    <circle cx="80" cy="312" r="14" fill="#d97757"/>
+    <text x="80" y="317" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">C</text>
+    <rect x="64" y="296" width="398" height="120" rx="13" fill="#252336"/>
+    <text x="86" y="328" fill="#b8b5c8" font-size="14">I'm sorry, I don't have access to your</text>
+    <text x="86" y="350" fill="#b8b5c8" font-size="14">browsing history or past activity.</text>
+    <text x="86" y="380" fill="#7b7890" font-size="13">Could you paste the link or the text?</text>
+
+    <text x="262" y="468" fill="#6b6878" font-size="14" text-anchor="middle" font-style="italic">context lost · you do the digging</text>
+  </g>
+
+  <!-- ===== AFTER panel ===== -->
+  <g>
+    <rect x="515" y="120" width="445" height="380" rx="18" fill="#16211f" stroke="#1f4a44" stroke-width="1.5"/>
+    <rect x="539" y="146" width="84" height="28" rx="14" fill="#16332e"/>
+    <text x="581" y="165" fill="#5fd0c5" font-size="14" font-weight="700" text-anchor="middle">AFTER</text>
+    <text x="936" y="165" fill="#5fd0c5" font-size="13" font-weight="600" text-anchor="end">+ BraveMCP</text>
+
+    <!-- user bubble -->
+    <rect x="625" y="196" width="312" height="62" rx="13" fill="#243a36"/>
+    <text x="645" y="222" fill="#e8e6f0" font-size="14">Remember that article on MCP security</text>
+    <text x="645" y="242" fill="#e8e6f0" font-size="14">I read last week?</text>
+
+    <!-- tool chip -->
+    <rect x="555" y="280" width="330" height="30" rx="8" fill="#1b2926"/>
+    <text x="570" y="300" fill="#5fd0c5" font-size="12" font-family="'SF Mono', Menlo, Consolas, monospace">⚙ find_forgotten_content("MCP security")</text>
+
+    <!-- claude bubble -->
+    <circle cx="555" cy="344" r="14" fill="#d97757"/>
+    <text x="555" y="349" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">C</text>
+    <rect x="539" y="328" width="398" height="120" rx="13" fill="#1b2b28"/>
+    <text x="561" y="358" fill="#e8e6f0" font-size="14">Yes — <tspan font-weight="700" fill="#fff">MCP Security Guidelines</tspan>,</text>
+    <text x="561" y="380" fill="#e8e6f0" font-size="14">visited 3× · 4 days ago. It covers</text>
+    <text x="561" y="402" fill="#e8e6f0" font-size="14">sandbox creds + shell injection.</text>
+    <text x="561" y="430" fill="#5fd0c5" font-size="12.5">🧠 pulled from your local memory · offline</text>
+
+    <text x="737" y="488" fill="#6b6878" font-size="14" text-anchor="middle" font-style="italic">found in one call · zero copy-paste</text>
+  </g>
+</svg>

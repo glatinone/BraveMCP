@@ -1,0 +1,87 @@
+<svg width="1000" height="460" viewBox="0 0 1000 460" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" role="img">
+  <title>BraveMCP architecture: Browser to Extension to HTTP Bridge to MCP Server to Claude Desktop</title>
+  <desc>Data flows from the browser through a Manifest V3 extension to a local HTTP bridge on port 3747, into the MCP server backed by SQLite, ChromaDB, and an AI pipeline, then to Claude Desktop over stdio.</desc>
+
+  <rect width="1000" height="460" fill="#fbfbfe"/>
+
+  <text x="40" y="50" fill="#1c1a29" font-size="24" font-weight="800">How BraveMCP works</text>
+  <text x="40" y="76" fill="#6b6878" font-size="15">Every hop stays on your machine — no data leaves localhost.</text>
+
+  <!-- pipeline boxes -->
+  <!-- 1 Browser -->
+  <g>
+    <rect x="40" y="120" width="150" height="84" rx="14" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+    <text x="115" y="152" fill="#1c1a29" font-size="16" font-weight="700" text-anchor="middle">Brave / Chrome</text>
+    <text x="115" y="176" fill="#8b8898" font-size="12.5" text-anchor="middle">you browse</text>
+  </g>
+  <!-- 2 Extension -->
+  <g>
+    <rect x="240" y="120" width="150" height="84" rx="14" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+    <text x="315" y="148" fill="#1c1a29" font-size="16" font-weight="700" text-anchor="middle">Extension</text>
+    <text x="315" y="168" fill="#8b8898" font-size="12" text-anchor="middle">Manifest V3</text>
+    <text x="315" y="186" fill="#8b8898" font-size="12" text-anchor="middle">tabs · marks · highlights</text>
+  </g>
+  <!-- 3 HTTP Bridge -->
+  <g>
+    <rect x="440" y="120" width="150" height="84" rx="14" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+    <text x="515" y="148" fill="#1c1a29" font-size="16" font-weight="700" text-anchor="middle">HTTP Bridge</text>
+    <text x="515" y="168" fill="#6c5ce7" font-size="12.5" font-weight="600" text-anchor="middle">Express · :3747</text>
+    <text x="515" y="186" fill="#8b8898" font-size="12" text-anchor="middle">POST endpoints</text>
+  </g>
+  <!-- 4 MCP Server -->
+  <g>
+    <rect x="640" y="120" width="150" height="84" rx="14" fill="#efeaff" stroke="#7c6cf0" stroke-width="2"/>
+    <text x="715" y="150" fill="#1c1a29" font-size="16" font-weight="700" text-anchor="middle">MCP Server</text>
+    <text x="715" y="170" fill="#8b8898" font-size="12" text-anchor="middle">Node + TypeScript</text>
+    <text x="715" y="188" fill="#8b8898" font-size="12" text-anchor="middle">13 tools</text>
+  </g>
+  <!-- 5 Claude -->
+  <g>
+    <rect x="840" y="120" width="120" height="84" rx="14" fill="#fdf0ea" stroke="#d97757" stroke-width="2"/>
+    <circle cx="900" cy="150" r="13" fill="#d97757"/>
+    <text x="900" y="155" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">C</text>
+    <text x="900" y="184" fill="#1c1a29" font-size="14" font-weight="700" text-anchor="middle">Claude</text>
+  </g>
+
+  <!-- arrows -->
+  <g stroke="#c8c5da" stroke-width="2" fill="#c8c5da">
+    <line x1="190" y1="162" x2="234" y2="162"/><polygon points="234,162 226,158 226,166"/>
+    <line x1="390" y1="162" x2="434" y2="162"/><polygon points="434,162 426,158 426,166"/>
+    <line x1="590" y1="162" x2="634" y2="162"/><polygon points="634,162 626,158 626,166"/>
+  </g>
+  <!-- stdio arrow (bidirectional) MCP <-> Claude -->
+  <g stroke="#d97757" stroke-width="2" fill="#d97757">
+    <line x1="790" y1="162" x2="834" y2="162"/><polygon points="834,162 826,158 826,166"/>
+    <polygon points="790,162 798,158 798,166"/>
+  </g>
+  <text x="812" y="110" fill="#d97757" font-size="11.5" font-weight="600" text-anchor="middle">stdio</text>
+  <text x="412" y="110" fill="#8b8898" font-size="11.5" text-anchor="middle">outbound POST only</text>
+
+  <!-- storage cluster under MCP server -->
+  <line x1="715" y1="204" x2="715" y2="250" stroke="#c8c5da" stroke-width="2"/>
+  <g>
+    <rect x="540" y="250" width="158" height="64" rx="12" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+    <text x="619" y="277" fill="#1c1a29" font-size="14" font-weight="700" text-anchor="middle">SQLite</text>
+    <text x="619" y="297" fill="#8b8898" font-size="12" text-anchor="middle">FTS5 keyword search</text>
+
+    <rect x="712" y="250" width="158" height="64" rx="12" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+    <text x="791" y="277" fill="#1c1a29" font-size="14" font-weight="700" text-anchor="middle">ChromaDB</text>
+    <text x="791" y="297" fill="#8b8898" font-size="12" text-anchor="middle">vector similarity</text>
+  </g>
+  <!-- AI pipeline box -->
+  <rect x="626" y="338" width="178" height="60" rx="12" fill="#ffffff" stroke="#e2e0ee" stroke-width="1.5"/>
+  <text x="715" y="364" fill="#1c1a29" font-size="14" font-weight="700" text-anchor="middle">AI pipeline</text>
+  <text x="715" y="383" fill="#8b8898" font-size="12" text-anchor="middle">Ollama → Anthropic fallback</text>
+  <line x1="619" y1="314" x2="619" y2="338" stroke="#c8c5da" stroke-width="1.5"/>
+  <line x1="791" y1="314" x2="791" y2="338" stroke="#c8c5da" stroke-width="1.5"/>
+
+  <!-- legend -->
+  <g font-size="12.5">
+    <rect x="40" y="250" width="11" height="11" rx="2" fill="#7c6cf0"/>
+    <text x="58" y="260" fill="#6b6878">core server</text>
+    <rect x="40" y="274" width="11" height="11" rx="2" fill="#d97757"/>
+    <text x="58" y="284" fill="#6b6878">Claude side (stdio)</text>
+    <rect x="40" y="298" width="11" height="11" rx="2" fill="#ffffff" stroke="#c8c5da"/>
+    <text x="58" y="308" fill="#6b6878">local storage / AI</text>
+  </g>
+</svg>
