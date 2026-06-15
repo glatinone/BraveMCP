@@ -32,6 +32,7 @@ import {
   generateTopicSynthesis,
   generateWeeklyDigest,
   detectSessionsWithAI,
+  clusterTabsIntoGroups,
 } from "./ai/pipeline.js";
 
 // In-memory state sync'd from browser extension
@@ -910,6 +911,20 @@ app.post("/api/highlight", async (req, res) => {
   try {
     const id = await saveHighlight(url, text, note);
     res.json({ status: "success", id });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/suggest-grouping", async (req, res) => {
+  const { tabs } = req.body as { tabs: Array<{ tabId: number; url: string; title: string }> };
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return res.status(400).json({ error: "Missing or empty tabs array" });
+  }
+
+  try {
+    const groups = await clusterTabsIntoGroups(tabs);
+    res.json({ groups });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
