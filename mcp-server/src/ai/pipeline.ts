@@ -425,6 +425,125 @@ function fallbackClustering(pagesText: string): Array<{ name: string; urls: stri
 }
 
 // ---------------------------------------------------------------------------
+// Tab Auto-Grouping
+// ---------------------------------------------------------------------------
+
+const GROUP_COLORS = ["blue", "green", "red", "yellow", "purple", "pink", "cyan", "orange", "grey"] as const;
+type TabGroupColor = typeof GROUP_COLORS[number];
+
+export interface TabInput {
+  tabId: number;
+  url: string;
+  title: string;
+}
+
+export interface TabGroup {
+  name: string;
+  color: TabGroupColor;
+  tabIds: number[];
+}
+
+export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
+  const domainMap = new Map<string, number[]>();
+  for (const tab of tabs) {
+    let domain = "other";
+    try { domain = new URL(tab.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
+    if (!domainMap.has(domain)) domainMap.set(domain, []);
+    domainMap.get(domain)!.push(tab.tabId);
+  }
+  return [...domainMap.entries()].map(([domain, tabIds], i) => ({
+    name: domain,
+    color: GROUP_COLORS[i % GROUP_COLORS.length],
+    tabIds,
+  }));
+}
+
+function parseGroupsJson(text: string, tabs: TabInput[]): TabGroup[] {
+  try {
+    const cleanText = text.replace(/```json|```/g, "").trim();
+    const raw = JSON.parse(cleanText) as Array<{ name: string; color: string; indices: number[] }>;
+    return raw.map((g, i) => ({
+      name: g.name || `Group ${i + 1}`,
+      color: (GROUP_COLORS.includes(g.color as TabGroupColor)
+        ? g.color
+        : GROUP_COLORS[i % GROUP_COLORS.length]) as TabGroupColor,
+      tabIds: (g.indices || [])
+        .map(idx => tabs[idx]?.tabId)
+        .filter((id): id is number => id !== undefined),
+    })).filter(g => g.tabIds.length > 0);
+  } catch {
+    return clusterTabsIntoGroupsFallback(tabs);
+  }
+}
+
+export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[]> {
+  if (tabs.length === 0) return [];
+
+  const tabList = tabs.map((t, i) => {
+    let host = t.url;
+    try { host = new URL(t.url).hostname; } catch { /* ignore */ }
+    return `${i}: "${t.title}" (${host})`;
+  }).join("\n");
+
+  const prompt = `You are a browser tab organizer. Cluster the following open tabs into 2–6 logical groups based on topic.
+
+Tabs (by index):
+${tabList}
+
+Rules:
+- Each group gets a short descriptive name (2–4 words, Title Case)
+- Pick one color per group from: blue, green, red, yellow, purple, pink, cyan, orange, grey
+- Every tab index must appear in exactly one group
+- Return ONLY a JSON array — no markdown fences, no explanation
+
+Format:
+[{"name": "AI Research", "color": "blue", "indices": [0, 1, 2]}, ...]`;
+
+  if (provider === "ollama") {
+    try {
+      const res = await fetch(`${ollamaUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama3.2",
+          messages: [{ role: "user", content: prompt }],
+          options: { temperature: 0.1 },
+          stream: false
+        })
+      });
+      if (!res.ok) throw new Error(`Ollama tab clustering error: ${await res.text()}`);
+      const data = (await res.json()) as { message: { content: string } };
+      return parseGroupsJson(data.message.content, tabs);
+    } catch (error) {
+      console.error("Ollama tab clustering failed, using domain fallback:", error);
+      return clusterTabsIntoGroupsFallback(tabs);
+    }
+  } else {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey || "",
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-haiku-20241022",
+          max_tokens: 400,
+          messages: [{ role: "user", content: prompt }]
+        })
+      });
+      if (!res.ok) throw new Error(`Anthropic tab clustering error: ${await res.text()}`);
+      const data = (await res.json()) as { content: { text: string }[] };
+      return parseGroupsJson(data.content[0].text, tabs);
+    } catch (error) {
+      console.error("Anthropic tab clustering failed, using domain fallback:", error);
+      return clusterTabsIntoGroupsFallback(tabs);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Extractive (no-LLM) fallbacks
 //
 // When Ollama / Anthropic are unavailable, these build a genuinely useful
