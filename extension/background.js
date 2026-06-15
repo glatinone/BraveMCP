@@ -150,6 +150,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         const allGroupedTabIds = [];
+        let appliedGroupCount = 0;
         for (const group of data.groups) {
           if (!group.tabIds || group.tabIds.length === 0) continue;
           const firstTab = allTabs.find(t => t.id === group.tabIds[0]);
@@ -166,13 +167,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             : { tabIds: validTabIds };
           const groupId = await chrome.tabs.group(groupOptions);
           await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
+          appliedGroupCount++;
           allGroupedTabIds.push(...validTabIds);
           // Fix (Critical 2): persist undo state after each successful group so that a
           // mid-loop failure still leaves undo data for the groups that succeeded.
           await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
         }
 
-        sendResponse({ status: "done", groupCount: data.groups.length });
+        sendResponse({ status: "done", groupCount: appliedGroupCount });
       } catch (err) {
         console.error("auto_group_tabs failed:", err);
         sendResponse({ status: "error", message: err.message });

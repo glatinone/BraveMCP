@@ -194,6 +194,7 @@ btnGroupTabs.addEventListener("click", () => {
   btnGroupTabs.textContent = "Grouping...";
 
   chrome.runtime.sendMessage({ action: "auto_group_tabs" }, (response) => {
+    if (chrome.runtime.lastError) { /* suppress warning */ }
     btnGroupTabs.disabled = false;
     btnGroupTabs.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -215,6 +216,7 @@ btnUndoGrouping.addEventListener("click", () => {
   btnUndoGrouping.textContent = "Undoing...";
 
   chrome.runtime.sendMessage({ action: "undo_grouping" }, (response) => {
+    if (chrome.runtime.lastError) { /* suppress warning */ }
     btnUndoGrouping.disabled = false;
     btnUndoGrouping.textContent = "Undo Grouping";
 
