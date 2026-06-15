@@ -126,4 +126,72 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     syncTabsAndVisit().then(() => sendResponse({ status: "done" }));
     return true;
   }
+
+  if (request.action === "auto_group_tabs") {
+    (async () => {
+      try {
+        const allTabs = await chrome.tabs.query({});
+        const tabs = allTabs
+          .filter(t => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("brave://") && !t.url.startsWith("about:"))
+          .map(t => ({ tabId: t.id, url: t.url, title: t.title || t.url }));
+
+        const res = await fetch(`${SERVER_URL}/api/suggest-grouping`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tabs })
+        });
+        const data = await res.json();
+
+        if (!data.groups || data.groups.length === 0) {
+          sendResponse({ status: "error", message: "No groups returned from server" });
+          return;
+        }
+
+        const allGroupedTabIds = [];
+        for (const group of data.groups) {
+          if (!group.tabIds || group.tabIds.length === 0) continue;
+          // Use the windowId of the first tab in the group to avoid cross-window errors
+          const firstTab = allTabs.find(t => t.id === group.tabIds[0]);
+          const groupOptions = firstTab?.windowId !== undefined
+            ? { tabIds: group.tabIds, createProperties: { windowId: firstTab.windowId } }
+            : { tabIds: group.tabIds };
+          const groupId = await chrome.tabs.group(groupOptions);
+          await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
+          allGroupedTabIds.push(...group.tabIds);
+        }
+
+        await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+        sendResponse({ status: "done", groupCount: data.groups.length });
+      } catch (err) {
+        console.error("auto_group_tabs failed:", err);
+        sendResponse({ status: "error", message: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === "undo_grouping") {
+    (async () => {
+      try {
+        const stored = await chrome.storage.session.get("groupedTabIds");
+        const tabIds = stored.groupedTabIds || [];
+        if (tabIds.length > 0) {
+          await chrome.tabs.ungroup(tabIds);
+        }
+        await chrome.storage.session.remove("groupedTabIds");
+        sendResponse({ status: "done" });
+      } catch (err) {
+        console.error("undo_grouping failed:", err);
+        sendResponse({ status: "error", message: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === "check_group_state") {
+    chrome.storage.session.get("groupedTabIds").then(stored => {
+      sendResponse({ hasGroups: !!(stored.groupedTabIds && stored.groupedTabIds.length > 0) });
+    });
+    return true;
+  }
 });
