@@ -149,29 +149,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
+        // Build tabId → windowId lookup for fast per-window splitting
+        const tabWindowMap = new Map(allTabs.map(t => [t.id, t.windowId]));
+
         const allGroupedTabIds = [];
         let appliedGroupCount = 0;
         for (const group of data.groups) {
           if (!group.tabIds || group.tabIds.length === 0) continue;
-          const firstTab = allTabs.find(t => t.id === group.tabIds[0]);
-          // Fix (Critical 1): keep only tabs that exist in the snapshot AND share the
-          // same window as the first tab — chrome.tabs.group() throws if tabIds span
-          // multiple windows, and createProperties.windowId does NOT coerce them.
-          const validTabIds = group.tabIds.filter(id => {
-            const t = allTabs.find(t => t.id === id);
-            return t !== undefined && t.windowId === firstTab?.windowId;
-          });
-          if (validTabIds.length === 0) continue;
-          const groupOptions = firstTab?.windowId !== undefined
-            ? { tabIds: validTabIds, createProperties: { windowId: firstTab.windowId } }
-            : { tabIds: validTabIds };
-          const groupId = await chrome.tabs.group(groupOptions);
-          await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
-          appliedGroupCount++;
-          allGroupedTabIds.push(...validTabIds);
-          // Fix (Critical 2): persist undo state after each successful group so that a
-          // mid-loop failure still leaves undo data for the groups that succeeded.
-          await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+
+          // Split this group's tabs by window so chrome.tabs.group() never
+          // receives cross-window IDs. Each window gets its own group with
+          // the same name and color, giving full multi-window coverage.
+          const byWindow = new Map();
+          for (const tabId of group.tabIds) {
+            const windowId = tabWindowMap.get(tabId);
+            if (windowId === undefined) continue; // tab was closed
+            if (!byWindow.has(windowId)) byWindow.set(windowId, []);
+            byWindow.get(windowId).push(tabId);
+          }
+
+          for (const [windowId, windowTabIds] of byWindow) {
+            if (windowTabIds.length === 0) continue;
+            const groupId = await chrome.tabs.group({ tabIds: windowTabIds, createProperties: { windowId } });
+            await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
+            appliedGroupCount++;
+            allGroupedTabIds.push(...windowTabIds);
+            // Persist undo state incrementally so partial failures leave valid undo data
+            await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+          }
         }
 
         sendResponse({ status: "done", groupCount: appliedGroupCount });
