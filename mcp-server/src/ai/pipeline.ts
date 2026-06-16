@@ -451,11 +451,25 @@ export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
     if (!domainMap.has(domain)) domainMap.set(domain, []);
     domainMap.get(domain)!.push(tab.tabId);
   }
-  return [...domainMap.entries()].map(([domain, tabIds], i) => ({
-    name: domain,
-    color: GROUP_COLORS[i % GROUP_COLORS.length],
-    tabIds,
-  }));
+  const sorted = [...domainMap.entries()].sort((a, b) => b[1].length - a[1].length);
+  const MAX_GROUPS = 6;
+  if (sorted.length <= MAX_GROUPS) {
+    return sorted.map(([domain, tabIds], i) => ({
+      name: domain,
+      color: GROUP_COLORS[i % GROUP_COLORS.length],
+      tabIds,
+    }));
+  }
+  const top = sorted.slice(0, MAX_GROUPS - 1);
+  const otherTabIds = sorted.slice(MAX_GROUPS - 1).flatMap(([, ids]) => ids);
+  return [
+    ...top.map(([domain, tabIds], i) => ({
+      name: domain,
+      color: GROUP_COLORS[i % GROUP_COLORS.length],
+      tabIds,
+    })),
+    { name: "Other", color: GROUP_COLORS[MAX_GROUPS - 1] as TabGroupColor, tabIds: otherTabIds },
+  ];
 }
 
 function parseGroupsJson(text: string, tabs: TabInput[]): TabGroup[] {
