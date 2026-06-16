@@ -509,23 +509,28 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
 
   const tabList = tabs.map((t, i) => {
     let host = t.url;
-    try { host = new URL(t.url).hostname; } catch { /* ignore */ }
+    try { host = new URL(t.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
     return `${i}: "${t.title}" (${host})`;
   }).join("\n");
 
-  const prompt = `You are a browser tab organizer. Cluster the following open tabs into 2–6 logical groups based on topic.
+  const prompt = `You are a browser tab organizer. Group these tabs the way a focused human would — by what they are actually doing, not by broad topic labels.
 
 Tabs (by index):
 ${tabList}
 
 Rules:
-- Each group gets a short descriptive name (2–4 words, Title Case)
+- Create 3–10 groups based on what genuinely makes sense for THESE specific tabs
+- Name each group after the specific site, project, or task — NOT a generic category
+  GOOD names: "lowlevel.academy", "GitHub Repos", "RAG with Ollama", "Playwright MCP", "OpenRouter Setup"
+  BAD names: "AI Research", "Tech Content", "Learning", "Productivity"
+- If many tabs are from the same site on the same topic, name the group after that site + topic
+- If tabs are clearly one active task or project, name it after that project
 - Pick one color per group from: blue, green, red, yellow, purple, pink, cyan, orange, grey
 - Every tab index must appear in exactly one group
-- Return ONLY a JSON array — no markdown fences, no explanation
+- Return ONLY a JSON array, no explanation, no markdown
 
 Format:
-[{"name": "AI Research", "color": "blue", "indices": [0, 1, 2]}, ...]`;
+[{"name": "lowlevel.academy", "color": "blue", "indices": [0, 1, 2]}, ...]`;
 
   if (currentProvider === "ollama") {
     try {
