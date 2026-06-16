@@ -1,4 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
+const BACKGROUND_VERSION = 2;
 
 // Helper to sync all tabs and notify page visit
 async function syncTabsAndVisit(activeTabId) {
@@ -213,6 +214,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     })();
     return true;
+  }
+
+  if (request.action === "get_version") {
+    sendResponse({ version: BACKGROUND_VERSION });
+    return false;
   }
 
   if (request.action === "check_group_state") {

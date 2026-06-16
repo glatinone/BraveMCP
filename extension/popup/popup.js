@@ -1,4 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
+const REQUIRED_BG_VERSION = 2;
 let activeTab = null;
 
 // UI Elements
@@ -57,8 +58,24 @@ function showFeedback(element, message, isError = false) {
   }, 3000);
 }
 
+// Auto-reload if background service worker is outdated.
+// popup.js always runs fresh, so this check fires on every popup open.
+function ensureBackgroundCurrent() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: "get_version" }, (response) => {
+      if (chrome.runtime.lastError || !response || response.version < REQUIRED_BG_VERSION) {
+        chrome.runtime.reload(); // reloads extension, popup closes automatically
+        // never resolve — the reload closes this popup
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 // Initialize active tab details
 async function init() {
+  await ensureBackgroundCurrent();
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs && tabs[0]) {
