@@ -495,6 +495,13 @@ function parseGroupsJson(text: string, tabs: TabInput[]): TabGroup[] {
 export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[]> {
   if (tabs.length === 0) return [];
 
+  // Re-read .env on each call so env changes don't require a server restart
+  dotenv.config({ path: join(__dirname, "..", "..", "..", ".env"), override: true });
+  const currentProvider = process.env.AI_PROVIDER || provider;
+  const currentApiKey = process.env.ANTHROPIC_API_KEY || apiKey;
+  const currentOpenrouterKey = process.env.OPENROUTER_API_KEY || openrouterKey;
+  const currentOpenrouterModel = process.env.OPENROUTER_MODEL || openrouterModel;
+
   const tabList = tabs.map((t, i) => {
     let host = t.url;
     try { host = new URL(t.url).hostname; } catch { /* ignore */ }
@@ -515,7 +522,7 @@ Rules:
 Format:
 [{"name": "AI Research", "color": "blue", "indices": [0, 1, 2]}, ...]`;
 
-  if (provider === "ollama") {
+  if (currentProvider === "ollama") {
     try {
       const res = await fetch(`${ollamaUrl}/api/chat`, {
         method: "POST",
@@ -534,18 +541,18 @@ Format:
       console.error("Ollama tab clustering failed, using domain fallback:", error);
       return clusterTabsIntoGroupsFallback(tabs);
     }
-  } else if (provider === "openrouter") {
+  } else if (currentProvider === "openrouter") {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${openrouterKey || ""}`,
+          "Authorization": `Bearer ${currentOpenrouterKey || ""}`,
           "HTTP-Referer": "https://github.com/glatinone/BraveMCP",
           "X-Title": "BraveMCP Tab Organizer"
         },
         body: JSON.stringify({
-          model: openrouterModel,
+          model: currentOpenrouterModel,
           max_tokens: 400,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }]
@@ -564,7 +571,7 @@ Format:
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey || "",
+          "x-api-key": currentApiKey || "",
           "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify({

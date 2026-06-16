@@ -916,10 +916,30 @@ app.post("/api/highlight", async (req, res) => {
   }
 });
 
+// Staged groups: Claude Code can POST pre-computed groups here; the next
+// call to /api/suggest-grouping will consume them instead of calling AI.
+let _stagedGroups: Array<{ name: string; color: string; tabIds: number[] }> | null = null;
+
+app.post("/api/stage-groups", (req, res) => {
+  const { groups } = req.body as { groups: Array<{ name: string; color: string; tabIds: number[] }> };
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return res.status(400).json({ error: "Missing or empty groups array" });
+  }
+  _stagedGroups = groups;
+  res.json({ ok: true, staged: groups.length });
+});
+
 app.post("/api/suggest-grouping", async (req, res) => {
   const { tabs } = req.body as { tabs: Array<{ tabId: number; url: string; title: string }> };
   if (!Array.isArray(tabs) || tabs.length === 0) {
     return res.status(400).json({ error: "Missing or empty tabs array" });
+  }
+
+  // Use pre-computed groups from Claude Code if available (one-shot, consumed on use)
+  if (_stagedGroups) {
+    const groups = _stagedGroups;
+    _stagedGroups = null;
+    return res.json({ groups });
   }
 
   try {
