@@ -477,7 +477,12 @@ export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
 function parseGroupsJson(text: string, tabs: TabInput[]): TabGroup[] {
   try {
     const cleanText = text.replace(/```json|```/g, "").trim();
-    const raw = JSON.parse(cleanText) as Array<{ name: string; color: string; indices: number[] }>;
+    // Model sometimes adds preamble text before the JSON array ("Here is the result...").
+    // Extract just the [...] portion so surrounding prose doesn't break parsing.
+    const start = cleanText.indexOf("[");
+    const end = cleanText.lastIndexOf("]");
+    if (start === -1 || end === -1) return clusterTabsIntoGroupsFallback(tabs);
+    const raw = JSON.parse(cleanText.slice(start, end + 1)) as Array<{ name: string; color: string; indices: number[] }>;
     return raw.map((g, i) => ({
       name: g.name || `Group ${i + 1}`,
       color: (GROUP_COLORS.includes(g.color as TabGroupColor)
@@ -553,7 +558,7 @@ Format:
         },
         body: JSON.stringify({
           model: currentOpenrouterModel,
-          max_tokens: 400,
+          max_tokens: 1500,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }]
         })
