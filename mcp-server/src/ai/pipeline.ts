@@ -11,6 +11,8 @@ dotenv.config({ path: join(__dirname, "..", "..", "..", ".env") });
 const provider = process.env.AI_PROVIDER || "ollama";
 const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
 const apiKey = process.env.ANTHROPIC_API_KEY;
+const openrouterKey = process.env.OPENROUTER_API_KEY;
+const openrouterModel = process.env.OPENROUTER_MODEL || "anthropic/claude-3-haiku";
 
 // Generate embedding for text
 export async function getEmbedding(text: string): Promise<number[]> {
@@ -530,6 +532,30 @@ Format:
       return parseGroupsJson(data.message.content, tabs);
     } catch (error) {
       console.error("Ollama tab clustering failed, using domain fallback:", error);
+      return clusterTabsIntoGroupsFallback(tabs);
+    }
+  } else if (provider === "openrouter") {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openrouterKey || ""}`,
+          "HTTP-Referer": "https://github.com/glatinone/BraveMCP",
+          "X-Title": "BraveMCP Tab Organizer"
+        },
+        body: JSON.stringify({
+          model: openrouterModel,
+          max_tokens: 400,
+          temperature: 0.1,
+          messages: [{ role: "user", content: prompt }]
+        })
+      });
+      if (!res.ok) throw new Error(`OpenRouter tab clustering error: ${await res.text()}`);
+      const data = (await res.json()) as { choices: { message: { content: string } }[] };
+      return parseGroupsJson(data.choices[0].message.content, tabs);
+    } catch (error) {
+      console.error("OpenRouter tab clustering failed, using domain fallback:", error);
       return clusterTabsIntoGroupsFallback(tabs);
     }
   } else {
