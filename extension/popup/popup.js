@@ -97,11 +97,15 @@ async function init() {
   // Check connection status
   await checkConnection();
 
+  // Show Undo if session storage says groups exist OR if browser actually has tab groups
   chrome.runtime.sendMessage({ action: "check_group_state" }, (response) => {
     if (response && response.hasGroups) {
       btnUndoGrouping.style.display = "block";
     }
   });
+  chrome.tabGroups.query({}).then(groups => {
+    if (groups.length > 0) btnUndoGrouping.style.display = "block";
+  }).catch(() => {});
 }
 
 // Capture current page content
