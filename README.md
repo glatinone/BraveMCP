@@ -70,7 +70,6 @@ Claude Desktop
 - [Brave](https://brave.com/) or Chrome browser
 - [Claude Desktop](https://claude.ai/download)
 - *(Optional)* [Ollama](https://ollama.com/) for local AI — `ollama pull llama3.2 && ollama pull nomic-embed-text`
-- *(Optional)* Python 3.10+ for ChromaDB vector search — `pip install chromadb`
 
 ### Install
 
@@ -107,12 +106,13 @@ Restart Claude Desktop.
 
 ### (Optional) Start ChromaDB for Semantic Search
 
+ChromaDB ships with the server’s npm dependencies, so there is no extra install. Start it with:
+
 ```bash
-pip install chromadb
-chroma run --path ./storage/chroma
+npm run chroma
 ```
 
-ChromaDB runs at `http://localhost:8000`. Without it, BraveMCP falls back to SQLite keyword search — still works great.
+It serves at `http://localhost:8000` and persists to `./storage/chroma`. Without it, BraveMCP falls back to SQLite keyword search, which still works well.
 
 ---
 
