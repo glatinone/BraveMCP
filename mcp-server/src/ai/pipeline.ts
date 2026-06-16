@@ -513,26 +513,26 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     return `${i}: "${t.title}" (${host})`;
   }).join("\n");
 
-  const prompt = `You are a browser tab organizer. Group these tabs by what the person is actually DOING or LEARNING — named after the specific topic or project, not the website.
+  const prompt = `You are a browser tab organizer. Group these tabs by what the person is actually doing — named after the TOPIC or PROJECT, read from the tab title.
 
 Tabs (by index, format: "title" (domain)):
 ${tabList}
 
-Rules:
-1. Create 3–8 groups. Every group name MUST be unique.
-2. Name each group by the TOPIC or PROJECT — read the tab TITLE to figure this out.
-   GOOD: "Low-Level Programming", "RAG with Ollama", "Playwright MCP Setup", "Job Search", "Side Project: BraveMCP"
-   BAD: "YouTube", "GitHub", "Twitter", "Reddit", "Google" — these are platforms, NOT topics
-3. For YouTube tabs: look at the video titles to find the subject (e.g. "Low-Level Academy videos" or "Machine Learning Tutorials")
-4. For GitHub tabs: look at the repo names in the titles to find the project (e.g. "Open Source Repos" or "Playwright Tools")
-5. For news/social tabs: group by what topic they're discussing, not the platform name
-6. Put unrelated one-off tabs together in "Misc" only as a last resort
-7. Pick one color per group from: blue, green, red, yellow, purple, pink, cyan, orange, grey
-8. Every tab index must appear in exactly one group
-9. Return ONLY a JSON array — no explanation, no markdown, no preamble
+STRICT RULES:
+1. Create enough groups so EVERY tab has a meaningful home. 5–15 groups is fine for large tab sets.
+2. EVERY group name must be UNIQUE and describe a REAL topic, project, or task.
+3. NEVER use: "Miscellaneous", "Other", "Misc", "Various", "General", "Uncategorized", "Mixed" — these are forbidden. If tabs seem unrelated, still find something specific they share (a domain, a tool, a skill area).
+4. Platform names alone are FORBIDDEN as group names: "YouTube", "GitHub", "Twitter", "Reddit", "Google", "LinkedIn" — instead name by what those tabs are ABOUT:
+   - YouTube tabs about assembly → "Assembly / Low-Level"
+   - GitHub repos for MCP tools → "MCP Tools"
+   - Google searches about RAG → "RAG Research"
+5. Read the FULL TAB TITLE — it tells you the topic far better than the domain.
+6. Pick one color per group: blue, green, red, yellow, purple, pink, cyan, orange, grey
+7. Every tab index must appear in exactly one group.
+8. Return ONLY a valid JSON array — no explanation, no markdown, no preamble text.
 
 Format:
-[{"name": "Low-Level Programming", "color": "blue", "indices": [0, 3, 7]}, {"name": "RAG with Ollama", "color": "green", "indices": [1, 2]}, ...]`;
+[{"name": "Low-Level Programming", "color": "blue", "indices": [0, 3, 7]}, {"name": "MCP Tools", "color": "green", "indices": [1, 2]}, ...]`;
 
   if (currentProvider === "ollama") {
     try {
@@ -565,7 +565,7 @@ Format:
         },
         body: JSON.stringify({
           model: currentOpenrouterModel,
-          max_tokens: 1500,
+          max_tokens: 2500,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }]
         })
