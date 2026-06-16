@@ -513,24 +513,26 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     return `${i}: "${t.title}" (${host})`;
   }).join("\n");
 
-  const prompt = `You are a browser tab organizer. Group these tabs the way a focused human would — by what they are actually doing, not by broad topic labels.
+  const prompt = `You are a browser tab organizer. Group these tabs by what the person is actually DOING or LEARNING — named after the specific topic or project, not the website.
 
-Tabs (by index):
+Tabs (by index, format: "title" (domain)):
 ${tabList}
 
 Rules:
-- Create 3–10 groups based on what genuinely makes sense for THESE specific tabs
-- Name each group after the specific site, project, or task — NOT a generic category
-  GOOD names: "lowlevel.academy", "GitHub Repos", "RAG with Ollama", "Playwright MCP", "OpenRouter Setup"
-  BAD names: "AI Research", "Tech Content", "Learning", "Productivity"
-- If many tabs are from the same site on the same topic, name the group after that site + topic
-- If tabs are clearly one active task or project, name it after that project
-- Pick one color per group from: blue, green, red, yellow, purple, pink, cyan, orange, grey
-- Every tab index must appear in exactly one group
-- Return ONLY a JSON array, no explanation, no markdown
+1. Create 3–8 groups. Every group name MUST be unique.
+2. Name each group by the TOPIC or PROJECT — read the tab TITLE to figure this out.
+   GOOD: "Low-Level Programming", "RAG with Ollama", "Playwright MCP Setup", "Job Search", "Side Project: BraveMCP"
+   BAD: "YouTube", "GitHub", "Twitter", "Reddit", "Google" — these are platforms, NOT topics
+3. For YouTube tabs: look at the video titles to find the subject (e.g. "Low-Level Academy videos" or "Machine Learning Tutorials")
+4. For GitHub tabs: look at the repo names in the titles to find the project (e.g. "Open Source Repos" or "Playwright Tools")
+5. For news/social tabs: group by what topic they're discussing, not the platform name
+6. Put unrelated one-off tabs together in "Misc" only as a last resort
+7. Pick one color per group from: blue, green, red, yellow, purple, pink, cyan, orange, grey
+8. Every tab index must appear in exactly one group
+9. Return ONLY a JSON array — no explanation, no markdown, no preamble
 
 Format:
-[{"name": "lowlevel.academy", "color": "blue", "indices": [0, 1, 2]}, ...]`;
+[{"name": "Low-Level Programming", "color": "blue", "indices": [0, 3, 7]}, {"name": "RAG with Ollama", "color": "green", "indices": [1, 2]}, ...]`;
 
   if (currentProvider === "ollama") {
     try {

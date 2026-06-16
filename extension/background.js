@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const BACKGROUND_VERSION = 2;
+const BACKGROUND_VERSION = 3;
 
 // Helper to sync all tabs and notify page visit
 async function syncTabsAndVisit(activeTabId) {
@@ -150,12 +150,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
+        // Merge groups that share the same name (AI sometimes returns duplicates)
+        const mergedMap = new Map();
+        for (const g of data.groups) {
+          if (!g.name || !g.tabIds || g.tabIds.length === 0) continue;
+          if (mergedMap.has(g.name)) {
+            mergedMap.get(g.name).tabIds.push(...g.tabIds);
+          } else {
+            mergedMap.set(g.name, { name: g.name, color: g.color, tabIds: [...g.tabIds] });
+          }
+        }
+        const mergedGroups = Array.from(mergedMap.values());
+
         // Build tabId → windowId lookup for fast per-window splitting
         const tabWindowMap = new Map(allTabs.map(t => [t.id, t.windowId]));
 
         const allGroupedTabIds = [];
         let appliedGroupCount = 0;
-        for (const group of data.groups) {
+        for (const group of mergedGroups) {
           if (!group.tabIds || group.tabIds.length === 0) continue;
 
           // Split this group's tabs by window so chrome.tabs.group() never
@@ -193,19 +205,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const stored = await chrome.storage.session.get("groupedTabIds");
-        const allTabIds = stored.groupedTabIds || [];
-        // Fix (Important 4): clear storage FIRST so a partial failure below never
-        // leaves stale IDs that would make future undo attempts throw again.
+        const storedIds = stored.groupedTabIds || [];
         await chrome.storage.session.remove("groupedTabIds");
-        if (allTabIds.length > 0) {
-          // Filter to tabs that are still open — chrome.tabs.ungroup() throws on
-          // any invalid ID, so passing a closed tab's ID would abort the whole call.
+
+        if (storedIds.length > 0) {
+          // Use the stored IDs we tracked during grouping
           const liveTabs = await chrome.tabs.query({});
           const liveIds = new Set(liveTabs.map(t => t.id));
-          const validIds = allTabIds.filter(id => liveIds.has(id));
-          if (validIds.length > 0) {
-            await chrome.tabs.ungroup(validIds);
-          }
+          const validIds = storedIds.filter(id => liveIds.has(id));
+          if (validIds.length > 0) await chrome.tabs.ungroup(validIds);
+        } else {
+          // Fallback: session storage was lost (service worker restarted).
+          // Ungroup every tab that is currently in any group across all windows.
+          const allTabs = await chrome.tabs.query({});
+          const groupedIds = allTabs
+            .filter(t => t.groupId !== undefined && t.groupId !== -1)
+            .map(t => t.id);
+          if (groupedIds.length > 0) await chrome.tabs.ungroup(groupedIds);
         }
         sendResponse({ status: "done" });
       } catch (err) {
