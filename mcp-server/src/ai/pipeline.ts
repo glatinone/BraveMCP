@@ -445,24 +445,84 @@ export interface TabGroup {
   tabIds: number[];
 }
 
-// Last-resort fallback: clean domain clustering. Deliberately NEVER emits a
-// catch-all group ("Other" spam regression) — beyond the cap, tabs simply
-// stay ungrouped, which is visually calmer than a meaningless bucket.
+// Last-resort fallback: smart no-LLM consolidation. Clusters by shared title
+// tokens first (cross-domain capable), then consolidates leftovers by domain.
+// Deliberately NEVER emits catch-all buckets or one group per tiny domain —
+// true singletons simply stay ungrouped, which is calmer than spam.
+const FALLBACK_STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "your", "you", "how",
+  "what", "when", "where", "which", "best", "top", "new", "free", "guide",
+  "home", "page", "pages", "official", "site", "website", "search", "login",
+  "dashboard", "inbox", "untitled", "google", "youtube", "github", "reddit",
+  "gmail", "twitter", "facebook", "linkedin", "instagram", "tiktok", "medium",
+  "penelusuran", "docs", "documentation", "tutorial", "online", "watch",
+]);
+
 export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
-  const domainMap = new Map<string, number[]>();
-  for (const tab of tabs) {
-    let domain = "site";
-    try { domain = new URL(tab.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
-    if (!domainMap.has(domain)) domainMap.set(domain, []);
-    domainMap.get(domain)!.push(tab.tabId);
+  const MAX_GROUPS = 10;
+  const info = tabs.map(t => {
+    let host = "";
+    try { host = new URL(t.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
+    const tokens = new Set(
+      (t.title || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9à-ſ\s]/g, " ")
+        .split(/\s+/)
+        .filter(w => w.length >= 4 && !FALLBACK_STOPWORDS.has(w))
+    );
+    return { tab: t, host, tokens };
+  });
+
+  const remaining = new Set(info.map((_, i) => i));
+  const groups: TabGroup[] = [];
+
+  // Pass 1: thematic clusters — the most-shared meaningful title token wins
+  while (groups.length < MAX_GROUPS) {
+    const counts = new Map<string, number[]>();
+    for (const i of remaining) {
+      for (const tok of info[i].tokens) {
+        if (!counts.has(tok)) counts.set(tok, []);
+        counts.get(tok)!.push(i);
+      }
+    }
+    let best: [string, number[]] | null = null;
+    for (const entry of counts) {
+      if (entry[1].length >= 2 && (!best || entry[1].length > best[1].length)) {
+        best = entry;
+      }
+    }
+    if (!best) break;
+    const [token, members] = best;
+    for (const i of members) remaining.delete(i);
+    groups.push({
+      name: token.charAt(0).toUpperCase() + token.slice(1),
+      color: GROUP_COLORS[groups.length % GROUP_COLORS.length],
+      tabIds: members.map(i => info[i].tab.tabId),
+    });
   }
-  const sorted = [...domainMap.entries()].sort((a, b) => b[1].length - a[1].length);
-  const MAX_GROUPS = 12;
-  return sorted.slice(0, MAX_GROUPS).map(([domain, tabIds], i) => ({
-    name: domain,
-    color: GROUP_COLORS[i % GROUP_COLORS.length],
-    tabIds,
-  }));
+
+  // Pass 2: consolidate leftovers by domain, only when a domain has >= 2 tabs
+  const byHost = new Map<string, number[]>();
+  for (const i of remaining) {
+    const host = info[i].host || "site";
+    if (!byHost.has(host)) byHost.set(host, []);
+    byHost.get(host)!.push(i);
+  }
+  const multiTabHosts = [...byHost.entries()]
+    .filter(([, members]) => members.length >= 2)
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [host, members] of multiTabHosts) {
+    if (groups.length >= MAX_GROUPS) break;
+    const label = host.split(".")[0];
+    for (const i of members) remaining.delete(i);
+    groups.push({
+      name: `${label.charAt(0).toUpperCase() + label.slice(1)} pages`,
+      color: GROUP_COLORS[groups.length % GROUP_COLORS.length],
+      tabIds: members.map(i => info[i].tab.tabId),
+    });
+  }
+
+  return groups;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,11 +534,12 @@ export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
 //                           domain fallback
 // ---------------------------------------------------------------------------
 
-const QUALITY_THRESHOLD = 85;
+const QUALITY_THRESHOLD = 90;
 const MAX_GENERATION_ATTEMPTS = 3;
 
-const BLACKLISTED_GROUP_NAMES = /^(other|others|misc|miscellaneous|general|untitled|various|uncategorized|mixed|random|stuff)$/i;
+const BLACKLISTED_GROUP_NAMES = /^(other|others|misc|miscellaneous|general|untitled|various|uncategorized|mixed|random|stuff|tech links)$/i;
 const PLATFORM_ONLY_NAMES = /^(youtube|github|reddit|google|twitter|x|facebook|instagram|linkedin|gmail|tiktok|medium)(\s*\.?\s*(com|ai|io|net|org|to))?$/i;
+const DOMAIN_LIKE_NAMES = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
 export interface GroupQualityReport {
   score: number;
@@ -508,6 +569,12 @@ export function evaluateGroupQuality(groups: TabGroup[], tabs: TabInput[]): Grou
       return {
         score: 0,
         reasons: [`Group name "${name}" is a bare platform name. Name the group after what those tabs are ABOUT (their topic), not the website.`],
+      };
+    }
+    if (DOMAIN_LIKE_NAMES.test(name)) {
+      return {
+        score: 0,
+        reasons: [`Group name "${name}" is a raw domain. Domains are NEVER valid group names — name the THEME or PROJECT these tabs share (e.g. "Browser Automation Tools", not "github.com").`],
       };
     }
   }
@@ -566,16 +633,41 @@ export function evaluateGroupQuality(groups: TabGroup[], tabs: TabInput[]): Grou
     reasons.push(`Duplicate group names: ${duplicateNames.map(([n]) => `"${n}"`).join(", ")}. Merge them into one group each.`);
   }
 
-  // Fragmentation Penalty (max -30): too many single-tab groups
+  // Fragmentation Penalty (up to -40): explosion of tiny groups
   const singles = groups.filter(g => g.tabIds.length === 1).length;
   const singleFraction = singles / groups.length;
   let fragmentation = 0;
-  if (groups.length >= 4 && singleFraction > 0.5) {
-    fragmentation = Math.round(30 * Math.min(1, (singleFraction - 0.5) / 0.5));
-    reasons.push(`${singles} of ${groups.length} groups contain only 1 tab. Merge related single-tab groups into broader topical groups (ideal group size: 2-8 tabs).`);
+  if (groups.length >= 3 && singleFraction > 0.4) {
+    fragmentation = Math.round(40 * Math.min(1, (singleFraction - 0.4) / 0.6));
+    reasons.push(`${singles} of ${groups.length} groups contain only 1 tab. Merge related single-tab groups under broader project/theme umbrellas (ideal group size: 2-8 tabs).`);
   }
 
-  const score = Math.max(0, Math.min(100, Math.round(structural + semantic - fragmentation)));
+  // Cross-Domain Cohesion Bonus (up to +30): groups that bind tabs from
+  // DIFFERENT domains under one theme prove real semantic clustering.
+  // Only awarded when structure is flawless, so the bonus can never mask
+  // missing or duplicated tabs.
+  let cohesionBonus = 0;
+  if (missing.length === 0 && duplicated.length === 0 && foreign.length === 0) {
+    const domainOf = new Map<number, string>();
+    for (const t of tabs) {
+      let d = "";
+      try { d = new URL(t.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
+      domainOf.set(t.tabId, d);
+    }
+    const multiTabGroups = groups.filter(g => g.tabIds.length >= 2);
+    if (multiTabGroups.length > 0) {
+      const crossDomainGroups = multiTabGroups.filter(
+        g => new Set(g.tabIds.map(id => domainOf.get(id) || "")).size >= 2
+      ).length;
+      cohesionBonus = Math.round(30 * (crossDomainGroups / multiTabGroups.length));
+    }
+  }
+
+  let score = Math.max(0, Math.min(100, Math.round(structural + semantic + cohesionBonus - fragmentation)));
+  // Hard caps: structural corruption must never ride past the threshold on
+  // the strength of good names alone.
+  if (duplicated.length > 0 || foreign.length > 0) score = Math.min(score, 75);
+  if (missing.length > Math.max(1, Math.ceil(tabs.length * 0.05))) score = Math.min(score, 85);
   return { score, reasons };
 }
 
@@ -610,31 +702,37 @@ function buildClusteringPrompt(
 ): string {
   const tabList = tabs.map((t, i) => {
     let host = t.url;
-    try { host = new URL(t.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
-    return `${i}: "${t.title}" (${host})`;
+    let path = "";
+    try {
+      const u = new URL(t.url);
+      host = u.hostname.replace(/^www\./, "");
+      path = u.pathname.length > 1 ? u.pathname.substring(0, 40) : "";
+    } catch { /* ignore */ }
+    return `${i}: "${t.title}" — ${host}${path}`;
   }).join("\n");
 
-  const base = `You are a browser tab organizer. Group these tabs by what the person is actually doing — named after the TOPIC or PROJECT, read from the tab title.
+  const base = `You are an expert knowledge-worker assistant organizing browser tabs. Your job is to reconstruct the user's WORKFLOWS: what projects, research threads, or tasks are they actually in the middle of? Group tabs by that intent — NEVER by which website they're on.
 
-Tabs (by index, format: "title" (domain)):
+Tabs (by index, format: "title" — domain/path):
 ${tabList}
 
+CORE PRINCIPLE — CROSS-DOMAIN THINKING:
+Tabs from DIFFERENT websites often belong to the SAME group. A GitHub repo, a Google search, and a docs page about the same subject are ONE cognitive thread — bind them together. Read both the title AND the URL path (e.g. "ycombinator.com/rfs" means startup ideas, not a generic YC bucket).
+
 STRICT RULES:
-1. Create enough groups so EVERY tab has a meaningful home. 5–15 groups is fine for large tab sets.
-2. EVERY group name must be UNIQUE and describe a REAL topic, project, or task.
-3. NEVER use: "Miscellaneous", "Other", "Misc", "Various", "General", "Uncategorized", "Mixed" — these are forbidden. If tabs seem unrelated, still find something specific they share (a domain, a tool, a skill area).
-4. Platform names alone are FORBIDDEN as group names: "YouTube", "GitHub", "Twitter", "Reddit", "Google", "LinkedIn" — instead name by what those tabs are ABOUT:
-   - YouTube tabs about assembly → "Assembly / Low-Level"
-   - GitHub repos for MCP tools → "MCP Tools"
-   - Google searches about RAG → "RAG Research"
-5. Read the FULL TAB TITLE — it tells you the topic far better than the domain.
-6. Prefer groups of 2-8 tabs. Only isolate a tab alone when its topic truly matches nothing else.
+1. Group names describe a THEME, PROJECT, or TASK.
+   GOOD: "MCP Protocol & Tooling Research", "Malware Analysis Lab Setup", "Frontend UI Component Crafting", "Personal Communications & Mail", "Browser Automation Tools"
+   BAD (instant rejection): "google.com", "github.com", "YouTube", "Gmail", "Other", "Misc", "General", "Tech Links"
+2. NEVER use a domain name or website name as a group name.
+3. NEVER use catch-all names ("Other", "Miscellaneous", "Various", "Uncategorized", "Mixed").
+4. Every group name must be UNIQUE.
+5. Prefer groups of 2-8 tabs. Unify small related clusters under one broader umbrella theme instead of creating many 1-tab groups.
+6. Every tab index must appear in exactly one group — no omissions, no duplicates.
 7. Pick one color per group: blue, green, red, yellow, purple, pink, cyan, orange, grey
-8. Every tab index must appear in exactly one group.
-9. Return ONLY a valid JSON array — no explanation, no markdown, no preamble text.
+8. Return ONLY a valid JSON array — no explanation, no markdown, no preamble text.
 
 Format:
-[{"name": "Low-Level Programming", "color": "blue", "indices": [0, 3, 7]}, {"name": "MCP Tools", "color": "green", "indices": [1, 2]}, ...]`;
+[{"name": "MCP Protocol & Tooling Research", "color": "blue", "indices": [0, 3, 7]}, {"name": "Personal Communications & Mail", "color": "green", "indices": [1, 2]}, ...]`;
 
   if (!repair) return base;
 
@@ -675,24 +773,40 @@ async function callClusteringLLM(
     }
 
     if (cfg.provider === "openrouter") {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${cfg.openrouterKey || ""}`,
-          "HTTP-Referer": "https://github.com/glatinone/BraveMCP",
-          "X-Title": "BraveMCP Tab Organizer"
-        },
-        body: JSON.stringify({
-          model: cfg.openrouterModel,
-          max_tokens: maxTokens,
-          temperature: 0.1,
-          messages: [{ role: "user", content: prompt }]
-        })
-      });
-      if (!res.ok) throw new Error(`OpenRouter error: ${await res.text()}`);
-      const data = (await res.json()) as { choices: { message: { content: string } }[] };
-      return data.choices[0].message.content;
+      // Adaptive token budgeting: a 402 tells us exactly how many tokens the
+      // account can still afford ("can only afford N") — clamp and retry once
+      // instead of failing the whole generation pass.
+      let tokenBudget = maxTokens;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${cfg.openrouterKey || ""}`,
+            "HTTP-Referer": "https://github.com/glatinone/BraveMCP",
+            "X-Title": "BraveMCP Tab Organizer"
+          },
+          body: JSON.stringify({
+            model: cfg.openrouterModel,
+            max_tokens: tokenBudget,
+            temperature: 0.1,
+            messages: [{ role: "user", content: prompt }]
+          })
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { choices: { message: { content: string } }[] };
+          return data.choices[0].message.content;
+        }
+        const errText = await res.text();
+        const afford = errText.match(/can only afford (\d+)/);
+        if (res.status === 402 && afford && attempt === 0) {
+          tokenBudget = Math.max(400, parseInt(afford[1], 10) - 100);
+          console.error(`[grouping] OpenRouter 402 — retrying with affordable budget of ${tokenBudget} tokens`);
+          continue;
+        }
+        throw new Error(`OpenRouter error: ${errText}`);
+      }
+      throw new Error("OpenRouter error: retries exhausted");
     }
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -728,8 +842,10 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     openrouterKey: process.env.OPENROUTER_API_KEY || openrouterKey,
     openrouterModel: process.env.OPENROUTER_MODEL || openrouterModel,
   };
-  // Scale output budget with tab count so large tab sets never truncate mid-JSON
-  const maxTokens = Math.min(8000, 1200 + tabs.length * 50);
+  // Scale output budget with tab count. The output is only names + index
+  // arrays (~15 tokens per group + ~3 per tab), so this stays lean — huge
+  // budgets get rejected outright by OpenRouter on low-credit accounts (402).
+  const maxTokens = Math.min(4000, 600 + tabs.length * 15);
 
   let repair: { previousDraft: string; score: number; reasons: string[] } | undefined;
 
@@ -737,13 +853,13 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     const prompt = buildClusteringPrompt(tabs, repair);
     const rawText = await callClusteringLLM(prompt, cfg, maxTokens);
     if (rawText === null) {
-      console.error(`[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: generation call failed, retrying`);
+      console.error(`[Pass ${attempt}] Generation call failed. Retrying...`);
       continue;
     }
 
     const groups = parseGroupsJsonStrict(rawText, tabs);
     if (!groups) {
-      console.error(`[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: output was not a valid JSON group array`);
+      console.error(`[Pass ${attempt}] Score: 0. Penalty: output was not a valid JSON group array. Retrying...`);
       repair = {
         previousDraft: rawText.substring(0, 2000),
         score: 0,
@@ -753,15 +869,14 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     }
 
     const { score, reasons } = evaluateGroupQuality(groups, tabs);
-    console.error(
-      `[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: score=${score}/100 (threshold ${QUALITY_THRESHOLD})` +
-      (reasons.length ? ` — issues: ${reasons.join(" | ")}` : " — clean")
-    );
-
     if (score >= QUALITY_THRESHOLD) {
-      console.error(`[grouping] accepted draft from attempt ${attempt} with ${groups.length} groups`);
+      console.error(`[Pass ${attempt}] Score: ${score}/100. Verified. Halting loop and applying ${groups.length} groups.`);
       return groups;
     }
+    console.error(
+      `[Pass ${attempt}] Score: ${score}/100 (threshold ${QUALITY_THRESHOLD}). ` +
+      `Penalties: ${reasons.join(" | ") || "below threshold"}. Retrying with feedback...`
+    );
 
     repair = {
       previousDraft: JSON.stringify(
@@ -772,7 +887,7 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     };
   }
 
-  console.error(`[grouping] all ${MAX_GENERATION_ATTEMPTS} attempts stayed below ${QUALITY_THRESHOLD} — using clean domain fallback`);
+  console.error(`[Fallback] All ${MAX_GENERATION_ATTEMPTS} passes stayed below ${QUALITY_THRESHOLD}. Applying consolidated thematic fallback.`);
   return clusterTabsIntoGroupsFallback(tabs);
 }
 

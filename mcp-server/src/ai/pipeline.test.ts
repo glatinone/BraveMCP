@@ -78,14 +78,14 @@ test("extractiveWeeklyDigest handles no captures", () => {
   assert.match(out, /No detailed page summaries/i);
 });
 
-test("clusterTabsIntoGroupsFallback groups tabs by domain", () => {
+test("clusterTabsIntoGroupsFallback consolidates same-domain tabs, leaves singletons ungrouped", () => {
   const tabs = [
     { tabId: 1, url: "https://github.com/user/repo1", title: "repo1" },
     { tabId: 2, url: "https://github.com/user/repo2", title: "repo2" },
     { tabId: 3, url: "https://mem0.ai/docs", title: "Mem0 docs" },
   ];
   const groups = clusterTabsIntoGroupsFallback(tabs);
-  assert.strictEqual(groups.length, 2);
+  assert.strictEqual(groups.length, 1);
   const githubGroup = groups.find(g => g.tabIds.includes(1) && g.tabIds.includes(2));
   assert.ok(githubGroup, "github tabs should be in same group");
   assert.ok(githubGroup!.name.length > 0);
@@ -97,26 +97,41 @@ test("clusterTabsIntoGroupsFallback handles empty input", () => {
   assert.strictEqual(groups.length, 0);
 });
 
+test("clusterTabsIntoGroupsFallback binds cross-domain tabs sharing a title theme", () => {
+  const tabs = [
+    { tabId: 1, url: "https://github.com/microsoft/playwright", title: "Playwright browser testing" },
+    { tabId: 2, url: "https://stackoverflow.com/q/1", title: "Playwright selector question" },
+    { tabId: 3, url: "https://mail.google.com/", title: "Inbox" },
+  ];
+  const groups = clusterTabsIntoGroupsFallback(tabs);
+  const themeGroup = groups.find(g => g.tabIds.includes(1) && g.tabIds.includes(2));
+  assert.ok(themeGroup, "cross-domain tabs sharing 'playwright' should be one group");
+  assert.match(themeGroup!.name, /playwright/i);
+});
+
 test("clusterTabsIntoGroupsFallback assigns different colors to different groups", () => {
   const tabs = [
-    { tabId: 1, url: "https://github.com/a", title: "a" },
-    { tabId: 2, url: "https://google.com/b", title: "b" },
+    { tabId: 1, url: "https://github.com/a", title: "alpha zebra" },
+    { tabId: 2, url: "https://github.com/b", title: "beta zebra" },
+    { tabId: 3, url: "https://dev.to/x", title: "gamma quokka" },
+    { tabId: 4, url: "https://dev.to/y", title: "delta quokka" },
   ];
   const groups = clusterTabsIntoGroupsFallback(tabs);
   assert.strictEqual(groups.length, 2);
   assert.notStrictEqual(groups[0].color, groups[1].color);
 });
 
-test("clusterTabsIntoGroupsFallback never emits an Other catch-all group", () => {
+test("clusterTabsIntoGroupsFallback never emits catch-all or domain-spam groups", () => {
   const tabs = Array.from({ length: 30 }, (_, i) => ({
     tabId: i + 1,
     url: `https://site${i}.com/page`,
-    title: `Page ${i}`,
+    title: `Topic${i} article`,
   }));
   const groups = clusterTabsIntoGroupsFallback(tabs);
-  assert.ok(groups.length <= 12);
+  assert.ok(groups.length <= 10);
   for (const g of groups) {
     assert.doesNotMatch(g.name, /^other$/i);
+    assert.ok(g.tabIds.length >= 2, `group "${g.name}" must not be a 1-tab domain spam group`);
   }
 });
 
@@ -134,7 +149,37 @@ test("evaluateGroupQuality accepts a clean topical grouping", () => {
     { name: "MCP Browser Tools", color: "blue", tabIds: [10, 11] },
     { name: "CompTIA Certification", color: "red", tabIds: [12, 13] },
   ], SCORE_TABS);
-  assert.ok(score >= 85, `expected >= 85, got ${score} (${reasons.join("; ")})`);
+  assert.ok(score >= 90, `expected >= 90, got ${score} (${reasons.join("; ")})`);
+});
+
+test("evaluateGroupQuality rejects raw domain names with score 0", () => {
+  const { score } = evaluateGroupQuality([
+    { name: "github.com", color: "blue", tabIds: [10, 11] },
+    { name: "CompTIA Certification", color: "red", tabIds: [12, 13] },
+  ], SCORE_TABS);
+  assert.strictEqual(score, 0);
+});
+
+test("evaluateGroupQuality awards cross-domain cohesion bonus", () => {
+  const crossDomainTabs = [
+    { tabId: 20, url: "https://github.com/browserbase/stagehand", title: "stagehand SDK" },
+    { tabId: 21, url: "https://google.com/search?q=browser+agents", title: "browser agents - Search" },
+    { tabId: 22, url: "https://reddit.com/r/CompTIA/a", title: "SEC AI+ exam" },
+    { tabId: 23, url: "https://reddit.com/r/CompTIA/b", title: "Security+ tips" },
+  ];
+  const crossDomain = evaluateGroupQuality([
+    { name: "Browser Automation Research", color: "blue", tabIds: [20, 21] },
+    { name: "CompTIA Certification", color: "red", tabIds: [22, 23] },
+  ], crossDomainTabs);
+  const sameDomainOnly = evaluateGroupQuality([
+    { name: "Stagehand SDK Work", color: "blue", tabIds: [20] },
+    { name: "Agent Search Research", color: "green", tabIds: [21] },
+    { name: "CompTIA Certification", color: "red", tabIds: [22, 23] },
+  ], crossDomainTabs);
+  assert.ok(
+    crossDomain.score > sameDomainOnly.score,
+    `cross-domain grouping (${crossDomain.score}) should outscore fragmented same-domain grouping (${sameDomainOnly.score})`
+  );
 });
 
 test("evaluateGroupQuality rejects blacklisted catch-all names with score 0", () => {
