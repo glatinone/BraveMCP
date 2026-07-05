@@ -34,6 +34,8 @@ import {
   generateWeeklyDigest,
   detectSessionsWithAI,
   clusterTabsIntoGroups,
+  evaluateGroupQuality,
+  type TabGroup,
 } from "./ai/pipeline.js";
 
 // In-memory state sync'd from browser extension
@@ -41,6 +43,7 @@ interface Tab {
   url: string;
   title: string;
   tabId: number;
+  windowId?: number;
 }
 
 let openTabs: Tab[] = [];
@@ -240,6 +243,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["vague_description"],
         },
       },
+      {
+        name: "get_all_open_tabs",
+        description: "Get the real-time array of ALL open browser tabs with ids and window ids. Call this FIRST when organizing tabs, then pass the tab ids to apply_tab_grouping.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "apply_tab_grouping",
+        description: "Apply semantic tab groups to the browser. Groups are validated by a strict critic engine before being staged: names must describe a TOPIC/PROJECT/THEME (e.g. 'MCP Protocol Research') — raw domain names ('github.com'), platform names ('YouTube'), and catch-alls ('Other', 'Misc') are rejected with an error explaining what to fix. Every open tab id should appear in exactly one group.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            groups: {
+              type: "array",
+              description: "The tab groups to apply",
+              items: {
+                type: "object",
+                properties: {
+                  name: {
+                    type: "string",
+                    description: "Topic/project/theme name (NOT a domain or platform name)",
+                  },
+                  color: {
+                    type: "string",
+                    enum: ["blue", "green", "red", "yellow", "purple", "pink", "cyan", "orange", "grey"],
+                  },
+                  tabIds: {
+                    type: "array",
+                    items: { type: "number" },
+                    description: "Tab ids from get_all_open_tabs",
+                  },
+                },
+                required: ["name", "color", "tabIds"],
+              },
+            },
+          },
+          required: ["groups"],
+        },
+      },
     ],
   };
 });
@@ -260,6 +304,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify(tabs, null, 2),
           },
         ],
+      };
+    }
+
+    case "get_all_open_tabs": {
+      if (openTabs.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "No live tab data available. The browser extension has not synced yet — ask the user to open any tab or click the BraveMCP popup once, then retry.",
+          }],
+        };
+      }
+      const result = openTabs.map(t => ({
+        id: t.tabId,
+        windowId: t.windowId ?? null,
+        title: t.title,
+        url: t.url,
+      }));
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+
+    case "apply_tab_grouping": {
+      const rawGroups = (args?.groups ?? []) as Array<{ name?: unknown; color?: unknown; tabIds?: unknown }>;
+      if (!Array.isArray(rawGroups) || rawGroups.length === 0) {
+        throw new Error("apply_tab_grouping requires a non-empty 'groups' array.");
+      }
+
+      const VALID_COLORS = new Set(["blue", "green", "red", "yellow", "purple", "pink", "cyan", "orange", "grey"]);
+      const groups: TabGroup[] = rawGroups.map((g, i) => {
+        const name = typeof g.name === "string" ? g.name.trim() : "";
+        const color = typeof g.color === "string" && VALID_COLORS.has(g.color) ? g.color : "blue";
+        const tabIds = Array.isArray(g.tabIds) ? g.tabIds.filter((id): id is number => typeof id === "number") : [];
+        if (!name) throw new Error(`Group at index ${i} is missing a name.`);
+        if (tabIds.length === 0) throw new Error(`Group "${name}" has no valid numeric tabIds.`);
+        return { name, color: color as TabGroup["color"], tabIds };
+      });
+
+      // Critic guardrail: the same scoring engine that governs the popup
+      // pipeline. A rejected draft throws so the calling Claude session sees
+      // the exact penalties and can self-heal its parameters.
+      if (openTabs.length === 0) {
+        throw new Error("Cannot validate grouping: no live tab data synced from the extension. Call get_all_open_tabs first and use its tab ids.");
+      }
+      const { score, reasons } = evaluateGroupQuality(groups, openTabs);
+      if (score < 90) {
+        throw new Error(
+          `Grouping rejected by critic engine (score ${score}/100, minimum 90). Fix these problems and call apply_tab_grouping again:\n` +
+          (reasons.length ? reasons.map(r => `- ${r}`).join("\n") : "- Groups must cover every open tab exactly once with topic-based names.")
+        );
+      }
+
+      _stagedGroups = groups;
+      console.error(`[apply_tab_grouping] Critic score ${score}/100 — ${groups.length} groups staged for the browser`);
+      return {
+        content: [{
+          type: "text",
+          text: `Grouping accepted (critic score ${score}/100). ${groups.length} groups staged: ${groups.map(g => `"${g.name}" (${g.tabIds.length} tabs)`).join(", ")}. The browser extension will apply them automatically within ~30 seconds, or instantly when the user clicks Auto-Group Tabs.`,
+        }],
       };
     }
 
@@ -928,6 +1032,18 @@ app.post("/api/stage-groups", (req, res) => {
   }
   _stagedGroups = groups;
   res.json({ ok: true, staged: groups.length });
+});
+
+// Polled by the extension background worker (~30s alarm): returns staged
+// groups exactly once, so apply_tab_grouping from Claude Desktop/CLI reaches
+// the browser without the user touching the popup.
+app.get("/api/pending-groups", (_req, res) => {
+  if (!_stagedGroups) {
+    return res.json({ groups: [] });
+  }
+  const groups = _stagedGroups;
+  _stagedGroups = null;
+  res.json({ groups });
 });
 
 app.post("/api/suggest-grouping", async (req, res) => {

@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
+import { homedir } from "os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -749,13 +751,109 @@ ${repair.reasons.map(r => `- ${r}`).join("\n")}
 Produce a corrected JSON array that fixes EVERY problem listed above. Return ONLY the JSON array.`;
 }
 
+// ---------------------------------------------------------------------------
+// Headless Claude CLI provider (zero API key — uses the local `claude` login).
+// The prompt is delivered via stdin, never via argv or a shell string, which
+// eliminates shell-injection risk, quoting bugs, and Windows command-length
+// limits in one move.
+// ---------------------------------------------------------------------------
+
+const CLAUDE_CLI_TIMEOUT_MS = 120_000;
+
+function claudeCliCandidates(): string[] {
+  const candidates: string[] = [];
+  if (process.env.CLAUDE_CLI_PATH) candidates.push(process.env.CLAUDE_CLI_PATH);
+  candidates.push("claude");
+  candidates.push(join(homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude"));
+  return candidates;
+}
+
+type ClaudeCliResult = { kind: "ok"; text: string } | { kind: "no-binary" } | { kind: "failed" };
+
+function spawnClaudeCli(command: string, prompt: string, model: string): Promise<ClaudeCliResult> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(
+        command,
+        ["-p", "You will receive full instructions via stdin. Follow them exactly and output only what they request.", "--model", model],
+        { stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
+      );
+    } catch {
+      resolve({ kind: "no-binary" });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      console.error(`[claude-cli] timed out after ${CLAUDE_CLI_TIMEOUT_MS / 1000}s — killing process`);
+      child.kill();
+      resolve({ kind: "failed" });
+    }, CLAUDE_CLI_TIMEOUT_MS);
+
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      resolve(err.code === "ENOENT" ? { kind: "no-binary" } : { kind: "failed" });
+    });
+    child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    child.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      if (code === 0 && stdout.trim().length > 0) {
+        resolve({ kind: "ok", text: stdout });
+      } else {
+        if (stderr.trim()) console.error(`[claude-cli] exited with code ${code}: ${stderr.substring(0, 300)}`);
+        resolve({ kind: "failed" });
+      }
+    });
+
+    child.stdin.on("error", () => { /* EPIPE if the process died early — close handler resolves */ });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+async function callClaudeCli(prompt: string, model: string): Promise<string | null> {
+  for (const command of claudeCliCandidates()) {
+    const result = await spawnClaudeCli(command, prompt, model);
+    if (result.kind === "ok") return result.text;
+    // Binary exists but the call failed — retrying other paths to the same
+    // binary would just burn another timeout. Bail to the fallback chain.
+    if (result.kind === "failed") return null;
+  }
+  return null;
+}
+
 // Phase 1: one LLM generation call. Returns the raw text or null on failure.
 async function callClusteringLLM(
   prompt: string,
-  cfg: { provider: string; apiKey?: string; openrouterKey?: string; openrouterModel: string },
+  cfg: { provider: string; apiKey?: string; openrouterKey?: string; openrouterModel: string; claudeCliModel: string },
   maxTokens: number
 ): Promise<string | null> {
   try {
+    if (cfg.provider === "claude-cli") {
+      // Zero-API-key path: headless `claude -p` using the local subscription
+      const cliText = await callClaudeCli(prompt, cfg.claudeCliModel);
+      if (cliText !== null) return cliText;
+
+      // Fallback 1: Ollama, if a local instance is up
+      console.error("[grouping] claude-cli unavailable — trying Ollama fallback");
+      const res = await fetch(`${ollamaUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama3.2",
+          messages: [{ role: "user", content: prompt }],
+          options: { temperature: 0.1 },
+          stream: false
+        })
+      });
+      if (!res.ok) throw new Error(`Ollama fallback error: ${await res.text()}`);
+      const data = (await res.json()) as { message: { content: string } };
+      return data.message.content;
+    }
+
     if (cfg.provider === "ollama") {
       const res = await fetch(`${ollamaUrl}/api/chat`, {
         method: "POST",
@@ -841,6 +939,7 @@ export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[
     apiKey: process.env.ANTHROPIC_API_KEY || apiKey,
     openrouterKey: process.env.OPENROUTER_API_KEY || openrouterKey,
     openrouterModel: process.env.OPENROUTER_MODEL || openrouterModel,
+    claudeCliModel: process.env.CLAUDE_CLI_MODEL || "haiku",
   };
   // Scale output budget with tab count. The output is only names + index
   // arrays (~15 tokens per group + ~3 per tab), so this stays lean — huge

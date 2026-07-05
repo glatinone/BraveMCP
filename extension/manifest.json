@@ -10,7 +10,8 @@
     "storage",
     "scripting",
     "contextMenus",
-    "tabGroups"
+    "tabGroups",
+    "alarms"
   ],
   "host_permissions": [
     "http://localhost:3747/*"

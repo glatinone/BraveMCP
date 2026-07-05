@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const BACKGROUND_VERSION = 6;
+const BACKGROUND_VERSION = 7;
 
 // --- Tab Archaeology --------------------------------------------------------
 // After a page finishes loading, ask its content script for the page context,
@@ -66,7 +66,8 @@ async function syncTabsAndVisit(activeTabId) {
       .map(t => ({
         url: t.url,
         title: t.title || t.url,
-        tabId: t.id
+        tabId: t.id,
+        windowId: t.windowId
       }));
 
     // Find current active tab details
@@ -177,6 +178,117 @@ chrome.bookmarks.onCreated.addListener(async (id, bookmark) => {
   }
 });
 
+// --- Shared grouping engine ---------------------------------------------
+// Tab groups only exist in 'normal' windows — app/popup/devtools windows
+// make chrome.tabs.group() throw "Grouping is not supported by tabs in this
+// window." Both entry points (popup button + staged-groups poller) go
+// through these helpers.
+
+async function getGroupableTabs() {
+  const [allTabsRaw, allWindows] = await Promise.all([
+    chrome.tabs.query({}),
+    chrome.windows.getAll()
+  ]);
+  const normalWindowIds = new Set(
+    allWindows.filter(w => w.type === "normal").map(w => w.id)
+  );
+  return allTabsRaw
+    .filter(t => normalWindowIds.has(t.windowId))
+    .filter(t => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("brave://") && !t.url.startsWith("about:"))
+    .map(t => ({ tabId: t.id, url: t.url, title: t.title || t.url, windowId: t.windowId }));
+}
+
+async function applyGroupsToBrowser(groups) {
+  const [allTabsRaw, allWindows] = await Promise.all([
+    chrome.tabs.query({}),
+    chrome.windows.getAll()
+  ]);
+  const normalWindowIds = new Set(
+    allWindows.filter(w => w.type === "normal").map(w => w.id)
+  );
+  const allTabs = allTabsRaw.filter(t => normalWindowIds.has(t.windowId));
+
+  // Clean slate: ungroup every currently grouped tab first, so re-running
+  // replaces old groups instead of layering new ones on top
+  try {
+    const preGrouped = allTabs
+      .filter(t => t.groupId !== undefined && t.groupId !== -1)
+      .map(t => t.id);
+    if (preGrouped.length > 0) {
+      await chrome.tabs.ungroup(preGrouped);
+    }
+  } catch (ungroupErr) {
+    console.warn("Pre-grouping cleanup failed (continuing):", ungroupErr);
+  }
+
+  // Merge groups that share the same name (AI sometimes returns duplicates)
+  const mergedMap = new Map();
+  for (const g of groups) {
+    if (!g.name || !g.tabIds || g.tabIds.length === 0) continue;
+    if (mergedMap.has(g.name)) {
+      mergedMap.get(g.name).tabIds.push(...g.tabIds);
+    } else {
+      mergedMap.set(g.name, { name: g.name, color: g.color, tabIds: [...g.tabIds] });
+    }
+  }
+
+  // Build tabId → windowId lookup for fast per-window splitting
+  const tabWindowMap = new Map(allTabs.map(t => [t.id, t.windowId]));
+
+  const allGroupedTabIds = [];
+  let appliedGroupCount = 0;
+  for (const group of mergedMap.values()) {
+    // Split this group's tabs by window so chrome.tabs.group() never
+    // receives cross-window IDs. Each window gets its own group with
+    // the same name and color, giving full multi-window coverage.
+    const byWindow = new Map();
+    for (const tabId of group.tabIds) {
+      const windowId = tabWindowMap.get(tabId);
+      if (windowId === undefined) continue; // tab was closed
+      if (!byWindow.has(windowId)) byWindow.set(windowId, []);
+      byWindow.get(windowId).push(tabId);
+    }
+
+    for (const [windowId, windowTabIds] of byWindow) {
+      if (windowTabIds.length === 0) continue;
+      // Per-window isolation: one failing window (closed mid-run, edge
+      // cases) must not abort grouping for every other window.
+      try {
+        const groupId = await chrome.tabs.group({ tabIds: windowTabIds, createProperties: { windowId } });
+        await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
+        appliedGroupCount++;
+        allGroupedTabIds.push(...windowTabIds);
+        // Persist undo state incrementally so partial failures leave valid undo data
+        await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+      } catch (groupErr) {
+        console.warn(`Skipped group "${group.name}" in window ${windowId}:`, groupErr.message);
+      }
+    }
+  }
+  return appliedGroupCount;
+}
+
+// --- Staged-groups poller --------------------------------------------------
+// Claude Desktop/CLI stages groups via the apply_tab_grouping MCP tool; this
+// alarm pulls and applies them without any popup interaction. chrome.alarms
+// survives service-worker sleep (setInterval does not).
+chrome.alarms.create("bravemcp-pending-groups", { periodInMinutes: 0.5 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== "bravemcp-pending-groups") return;
+  try {
+    const res = await fetch(`${SERVER_URL}/api/pending-groups`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.groups && data.groups.length > 0) {
+      const count = await applyGroupsToBrowser(data.groups);
+      console.log(`Applied ${count} staged tab groups from Claude`);
+    }
+  } catch {
+    // Bridge offline — silent; the next alarm tick retries.
+  }
+});
+
 // Expose runtime message listener to handle popup requests
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "sync_tabs") {
@@ -187,21 +299,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "auto_group_tabs") {
     (async () => {
       try {
-        // Tab groups only exist in 'normal' windows — app/popup/devtools
-        // windows make chrome.tabs.group() throw "Grouping is not supported
-        // by tabs in this window." Filter those tabs out up front.
-        const [allTabsRaw, allWindows] = await Promise.all([
-          chrome.tabs.query({}),
-          chrome.windows.getAll()
-        ]);
-        const normalWindowIds = new Set(
-          allWindows.filter(w => w.type === "normal").map(w => w.id)
-        );
-        const allTabs = allTabsRaw.filter(t => normalWindowIds.has(t.windowId));
-        const tabs = allTabs
-          .filter(t => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("brave://") && !t.url.startsWith("about:"))
-          .map(t => ({ tabId: t.id, url: t.url, title: t.title || t.url }));
-
+        const tabs = await getGroupableTabs();
         if (tabs.length === 0) {
           sendResponse({ status: "error", message: "No groupable tabs found in normal windows" });
           return;
@@ -221,67 +319,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        // Clean slate: ungroup every currently grouped tab first, so re-running
-        // the button replaces old groups instead of layering new ones on top
-        try {
-          const preGrouped = allTabs
-            .filter(t => t.groupId !== undefined && t.groupId !== -1)
-            .map(t => t.id);
-          if (preGrouped.length > 0) {
-            await chrome.tabs.ungroup(preGrouped);
-          }
-        } catch (ungroupErr) {
-          console.warn("Pre-grouping cleanup failed (continuing):", ungroupErr);
-        }
-
-        // Merge groups that share the same name (AI sometimes returns duplicates)
-        const mergedMap = new Map();
-        for (const g of data.groups) {
-          if (!g.name || !g.tabIds || g.tabIds.length === 0) continue;
-          if (mergedMap.has(g.name)) {
-            mergedMap.get(g.name).tabIds.push(...g.tabIds);
-          } else {
-            mergedMap.set(g.name, { name: g.name, color: g.color, tabIds: [...g.tabIds] });
-          }
-        }
-        const mergedGroups = Array.from(mergedMap.values());
-
-        // Build tabId → windowId lookup for fast per-window splitting
-        const tabWindowMap = new Map(allTabs.map(t => [t.id, t.windowId]));
-
-        const allGroupedTabIds = [];
-        let appliedGroupCount = 0;
-        for (const group of mergedGroups) {
-          if (!group.tabIds || group.tabIds.length === 0) continue;
-
-          // Split this group's tabs by window so chrome.tabs.group() never
-          // receives cross-window IDs. Each window gets its own group with
-          // the same name and color, giving full multi-window coverage.
-          const byWindow = new Map();
-          for (const tabId of group.tabIds) {
-            const windowId = tabWindowMap.get(tabId);
-            if (windowId === undefined) continue; // tab was closed
-            if (!byWindow.has(windowId)) byWindow.set(windowId, []);
-            byWindow.get(windowId).push(tabId);
-          }
-
-          for (const [windowId, windowTabIds] of byWindow) {
-            if (windowTabIds.length === 0) continue;
-            // Per-window isolation: one failing window (closed mid-run, edge
-            // cases) must not abort grouping for every other window.
-            try {
-              const groupId = await chrome.tabs.group({ tabIds: windowTabIds, createProperties: { windowId } });
-              await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
-              appliedGroupCount++;
-              allGroupedTabIds.push(...windowTabIds);
-              // Persist undo state incrementally so partial failures leave valid undo data
-              await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
-            } catch (groupErr) {
-              console.warn(`Skipped group "${group.name}" in window ${windowId}:`, groupErr.message);
-            }
-          }
-        }
-
+        const appliedGroupCount = await applyGroupsToBrowser(data.groups);
         if (appliedGroupCount === 0) {
           sendResponse({ status: "error", message: "No groups could be applied — try again" });
           return;

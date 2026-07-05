@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const REQUIRED_BG_VERSION = 6;
+const REQUIRED_BG_VERSION = 7;
 let activeTab = null;
 
 // UI Elements
