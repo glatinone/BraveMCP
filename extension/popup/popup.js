@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const REQUIRED_BG_VERSION = 4;
+const REQUIRED_BG_VERSION = 5;
 let activeTab = null;
 
 // UI Elements
@@ -16,10 +16,18 @@ const btnGroupTabs = document.getElementById("btn-group-tabs");
 const btnUndoGrouping = document.getElementById("btn-undo-grouping");
 const groupFeedback = document.getElementById("group-feedback");
 
-// Check connection to HTTP Bridge
+// Check connection to HTTP Bridge.
+// Uses a short timeout so a hung request can't freeze the status, and keeps
+// retrying every 3s while offline — the badge flips to Online by itself when
+// the bridge comes back (e.g. right after a Claude Desktop restart).
+let retryTimer = null;
+
 async function checkConnection() {
   try {
-    const response = await fetch(`${SERVER_URL}/api/status`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    const response = await fetch(`${SERVER_URL}/api/status`, { signal: controller.signal });
+    clearTimeout(timeout);
     const data = await response.json();
     if (data.status === "ok") {
       statusDot.classList.add("connected");
@@ -27,17 +35,21 @@ async function checkConnection() {
       btnCapture.disabled = !activeTab;
       btnSaveNote.disabled = false;
       btnGroupTabs.disabled = false;
+      if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
       return true;
     }
   } catch (error) {
     console.error("Connection check failed:", error);
   }
-  
+
   statusDot.classList.remove("connected");
-  statusText.textContent = "Offline";
+  statusText.textContent = "Offline — retrying...";
   btnCapture.disabled = true;
   btnSaveNote.disabled = true;
   btnGroupTabs.disabled = true;
+  if (!retryTimer) {
+    retryTimer = setInterval(checkConnection, 3000);
+  }
   return false;
 }
 

@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const BACKGROUND_VERSION = 4;
+const BACKGROUND_VERSION = 5;
 
 // --- Tab Archaeology --------------------------------------------------------
 // After a page finishes loading, ask its content script for the page context,
@@ -204,6 +204,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!data.groups || data.groups.length === 0) {
           sendResponse({ status: "error", message: "No groups returned from server" });
           return;
+        }
+
+        // Clean slate: ungroup every currently grouped tab first, so re-running
+        // the button replaces old groups instead of layering new ones on top
+        try {
+          const preGrouped = allTabs
+            .filter(t => t.groupId !== undefined && t.groupId !== -1)
+            .map(t => t.id);
+          if (preGrouped.length > 0) {
+            await chrome.tabs.ungroup(preGrouped);
+          }
+        } catch (ungroupErr) {
+          console.warn("Pre-grouping cleanup failed (continuing):", ungroupErr);
         }
 
         // Merge groups that share the same name (AI sometimes returns duplicates)

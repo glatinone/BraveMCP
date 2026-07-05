@@ -12,7 +12,7 @@ const provider = process.env.AI_PROVIDER || "ollama";
 const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
 const apiKey = process.env.ANTHROPIC_API_KEY;
 const openrouterKey = process.env.OPENROUTER_API_KEY;
-const openrouterModel = process.env.OPENROUTER_MODEL || "anthropic/claude-3-haiku";
+const openrouterModel = process.env.OPENROUTER_MODEL || "anthropic/claude-haiku-4.5";
 
 // Generate embedding for text
 export async function getEmbedding(text: string): Promise<number[]> {
