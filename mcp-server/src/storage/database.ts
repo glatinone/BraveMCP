@@ -484,6 +484,160 @@ export async function hybridSearch(queryText: string) {
   results.sort((a, b) => b.relevance - a.relevance);
   return results.slice(0, 10);
 }
+// ---------------------------------------------------------------------------
+// Tab Archaeology: given the page the user is viewing right now, find a
+// semantically similar page from their PAST research (older than 24h).
+// Prefers ChromaDB vector similarity; falls back to FTS5 keyword matching
+// when ChromaDB/Ollama are offline so the feature degrades gracefully.
+// ---------------------------------------------------------------------------
+
+export interface ArchaeologyMatch {
+  matchFound: boolean;
+  pastTitle?: string;
+  pastUrl?: string;
+  pastSummary?: string;
+  timestamp?: number;
+  score?: number;
+}
+
+const ARCHAEOLOGY_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const ARCHAEOLOGY_SEMANTIC_THRESHOLD = 0.82; // cosine similarity
+const ARCHAEOLOGY_MIN_TERM_OVERLAP = 3;      // keyword mode: shared distinct terms
+const ARCHAEOLOGY_MIN_OVERLAP_RATIO = 0.2;   // keyword mode: share of query vocabulary
+
+const ARCHAEOLOGY_STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "are", "was", "were",
+  "how", "why", "what", "when", "where", "which", "who", "you", "your", "yours",
+  "has", "have", "had", "can", "will", "not", "all", "use", "using", "used",
+  "get", "new", "one", "two", "our", "its", "more", "most", "best", "top",
+  "into", "out", "over", "also", "than", "then", "them", "they", "their",
+  "there", "here", "been", "being", "but", "his", "her", "him", "she", "does",
+  "did", "doing", "each", "few", "other", "some", "such", "only", "own",
+  "same", "too", "very", "just", "now", "about", "these", "those", "guide",
+  "learn", "make", "like", "any", "way", "ways",
+]);
+
+function extractArchaeologyTerms(title: string, text: string): string[] {
+  const seen = new Set<string>();
+  const words = `${title} ${text.substring(0, 600)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9à-ſ\s]/g, " ")
+    .split(/\s+/);
+  for (const w of words) {
+    if (w.length >= 3 && !ARCHAEOLOGY_STOPWORDS.has(w)) seen.add(w);
+    if (seen.size >= 24) break;
+  }
+  return [...seen];
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./, "")}${u.pathname.replace(/\/$/, "")}`.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+export async function findArchaeologyMatch(
+  currentUrl: string,
+  title: string,
+  text: string
+): Promise<ArchaeologyMatch> {
+  const now = Date.now();
+  const currentKey = normalizeUrl(currentUrl);
+  const queryText = `${title}\n\n${text}`.substring(0, 4000);
+  const queryTerms = extractArchaeologyTerms(title, text);
+
+  const candidates: Array<{ id: string; score: number; source: "semantic" | "keyword" }> = [];
+
+  // 1. Semantic search via ChromaDB (preferred)
+  if (isChromaConnected()) {
+    try {
+      const embedding = await getEmbedding(queryText);
+      const matches = await queryChroma(embedding, 8);
+      for (const m of matches) {
+        const similarity = 1 - m.distance;
+        if (similarity >= ARCHAEOLOGY_SEMANTIC_THRESHOLD) {
+          candidates.push({ id: m.id, score: similarity, source: "semantic" });
+        }
+      }
+    } catch (err) {
+      console.error("Archaeology semantic search failed:", err);
+    }
+  }
+
+  // 2. Keyword fallback via FTS5 — only when semantic search produced nothing.
+  // bm25 OR-queries saturate on a single shared word, so the real filtering
+  // happens below via distinct-term overlap against the hydrated page.
+  if (candidates.length === 0 && queryTerms.length >= ARCHAEOLOGY_MIN_TERM_OVERLAP) {
+    const ftsQuery = queryTerms.map(t => `"${t}"`).join(" OR ");
+    try {
+      const rows = db.prepare(`
+        SELECT source_id
+        FROM search_index
+        WHERE search_index MATCH ?
+        ORDER BY bm25(search_index)
+        LIMIT 15
+      `).all(ftsQuery) as Array<{ source_id: string }>;
+
+      for (const r of rows) {
+        candidates.push({ id: r.source_id, score: 0, source: "keyword" });
+      }
+    } catch (err) {
+      console.error("Archaeology keyword search failed:", err);
+    }
+  }
+
+  const verified: Array<{ score: number; page: { url: string; title: string | null; summary: string | null; created_at: number; last_visited: number } }> = [];
+
+  for (const c of candidates) {
+    const page = db.prepare(
+      "SELECT url, title, summary, content, created_at, last_visited FROM pages WHERE id = ?"
+    ).get(c.id) as {
+      url: string;
+      title: string | null;
+      summary: string | null;
+      content: string | null;
+      created_at: number;
+      last_visited: number;
+    } | undefined;
+
+    if (!page) continue; // candidate was a note/highlight — archaeology is about pages
+    if (normalizeUrl(page.url) === currentKey) continue; // same page, not a rediscovery
+    if (now - page.last_visited < ARCHAEOLOGY_MIN_AGE_MS) continue; // seen too recently
+
+    let score = c.score;
+    if (c.source === "keyword") {
+      // Verify genuine topical overlap: the past page must share several
+      // distinct meaningful terms with the current one, not just one word.
+      const haystack = `${page.title || ""} ${page.summary || ""} ${(page.content || "").substring(0, 2000)}`.toLowerCase();
+      const overlap = queryTerms.filter(t => haystack.includes(t)).length;
+      const ratio = queryTerms.length > 0 ? overlap / queryTerms.length : 0;
+      if (overlap < ARCHAEOLOGY_MIN_TERM_OVERLAP || ratio < ARCHAEOLOGY_MIN_OVERLAP_RATIO) continue;
+      score = ratio;
+    }
+
+    verified.push({ score, page });
+  }
+
+  verified.sort((a, b) => b.score - a.score);
+
+  if (verified.length > 0) {
+    const best = verified[0];
+    return {
+      matchFound: true,
+      pastTitle: best.page.title || best.page.url,
+      pastUrl: best.page.url,
+      pastSummary: best.page.summary || "",
+      timestamp: best.page.created_at || best.page.last_visited,
+      score: Math.round(best.score * 100) / 100,
+    };
+  }
+
+  return { matchFound: false };
+}
+
 export function getPagesWithContent() {
   return db.prepare("SELECT id, url, title, summary, content FROM pages WHERE content IS NOT NULL").all() as Array<{
     id: string;

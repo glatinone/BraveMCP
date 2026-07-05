@@ -24,6 +24,7 @@ import {
   getResearchSessions,
   getLastActivePage,
   getRecentlyVisitedPages,
+  findArchaeologyMatch,
 } from "./storage/database.js";
 import { initChroma, isChromaConnected } from "./storage/chroma.js";
 import {
@@ -946,6 +947,25 @@ app.post("/api/suggest-grouping", async (req, res) => {
     const groups = await clusterTabsIntoGroups(tabs);
     res.json({ groups });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Tab Archaeology: the extension sends the current page's context; we answer
+// with a past-research match (if any) older than 24 hours.
+app.post("/api/check-context", async (req, res) => {
+  const { url, title, text } = req.body as { url?: string; title?: string; text?: string };
+  if (!url) {
+    return res.status(400).json({ error: "Missing url parameter" });
+  }
+
+  try {
+    // Truncate to ~1500 words so embedding input stays within safe limits
+    const safeText = (text || "").split(/\s+/).slice(0, 1500).join(" ");
+    const match = await findArchaeologyMatch(url, title || "", safeText);
+    res.json(match);
+  } catch (err: any) {
+    console.error("check-context failed:", err);
     res.status(500).json({ error: err.message });
   }
 });

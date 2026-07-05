@@ -1,5 +1,60 @@
 const SERVER_URL = "http://localhost:3747";
-const BACKGROUND_VERSION = 3;
+const BACKGROUND_VERSION = 4;
+
+// --- Tab Archaeology --------------------------------------------------------
+// After a page finishes loading, ask its content script for the page context,
+// send it to the HTTP bridge for a semantic match against past research, and
+// tell the content script to show the overlay banner if a match comes back.
+// Debounced per-tab so SPA transitions and redirects don't flood the bridge.
+const archaeologyTimers = new Map();   // tabId -> debounce timeout id
+const archaeologyChecked = new Set();  // "tabId|url" pairs already checked
+
+function isArchaeologyCheckable(url) {
+  return !!url && /^https?:/.test(url) && !url.startsWith(SERVER_URL);
+}
+
+function scheduleArchaeologyCheck(tabId, url) {
+  if (!isArchaeologyCheckable(url)) return;
+  const key = `${tabId}|${url}`;
+  if (archaeologyChecked.has(key)) return;
+
+  clearTimeout(archaeologyTimers.get(tabId));
+  archaeologyTimers.set(tabId, setTimeout(async () => {
+    archaeologyTimers.delete(tabId);
+    try {
+      const context = await chrome.tabs.sendMessage(tabId, { action: "extract_content" });
+      if (!context || context.error || !context.content || context.content.length < 200) return;
+
+      const res = await fetch(`${SERVER_URL}/api/check-context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: context.url,
+          title: context.title,
+          text: context.content
+        })
+      });
+      if (!res.ok) return;
+      const match = await res.json();
+      archaeologyChecked.add(key);
+
+      if (match && match.matchFound) {
+        await chrome.tabs.sendMessage(tabId, { action: "show_archaeology", match });
+      }
+    } catch (err) {
+      // Tab closed, content script not injected (e.g. store pages), or bridge
+      // offline — all non-fatal for passive archaeology.
+    }
+  }, 2000));
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  clearTimeout(archaeologyTimers.get(tabId));
+  archaeologyTimers.delete(tabId);
+  for (const key of archaeologyChecked) {
+    if (key.startsWith(`${tabId}|`)) archaeologyChecked.delete(key);
+  }
+});
 
 // Helper to sync all tabs and notify page visit
 async function syncTabsAndVisit(activeTabId) {
@@ -56,6 +111,7 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete") {
     syncTabsAndVisit(tabId);
+    scheduleArchaeologyCheck(tabId, tab.url);
   }
 });
 
