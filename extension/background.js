@@ -1,5 +1,5 @@
 const SERVER_URL = "http://localhost:3747";
-const BACKGROUND_VERSION = 5;
+const BACKGROUND_VERSION = 6;
 
 // --- Tab Archaeology --------------------------------------------------------
 // After a page finishes loading, ask its content script for the page context,
@@ -187,10 +187,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "auto_group_tabs") {
     (async () => {
       try {
-        const allTabs = await chrome.tabs.query({});
+        // Tab groups only exist in 'normal' windows — app/popup/devtools
+        // windows make chrome.tabs.group() throw "Grouping is not supported
+        // by tabs in this window." Filter those tabs out up front.
+        const [allTabsRaw, allWindows] = await Promise.all([
+          chrome.tabs.query({}),
+          chrome.windows.getAll()
+        ]);
+        const normalWindowIds = new Set(
+          allWindows.filter(w => w.type === "normal").map(w => w.id)
+        );
+        const allTabs = allTabsRaw.filter(t => normalWindowIds.has(t.windowId));
         const tabs = allTabs
           .filter(t => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("brave://") && !t.url.startsWith("about:"))
           .map(t => ({ tabId: t.id, url: t.url, title: t.title || t.url }));
+
+        if (tabs.length === 0) {
+          sendResponse({ status: "error", message: "No groupable tabs found in normal windows" });
+          return;
+        }
 
         const res = await fetch(`${SERVER_URL}/api/suggest-grouping`, {
           method: "POST",
@@ -252,15 +267,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           for (const [windowId, windowTabIds] of byWindow) {
             if (windowTabIds.length === 0) continue;
-            const groupId = await chrome.tabs.group({ tabIds: windowTabIds, createProperties: { windowId } });
-            await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
-            appliedGroupCount++;
-            allGroupedTabIds.push(...windowTabIds);
-            // Persist undo state incrementally so partial failures leave valid undo data
-            await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+            // Per-window isolation: one failing window (closed mid-run, edge
+            // cases) must not abort grouping for every other window.
+            try {
+              const groupId = await chrome.tabs.group({ tabIds: windowTabIds, createProperties: { windowId } });
+              await chrome.tabGroups.update(groupId, { title: group.name, color: group.color });
+              appliedGroupCount++;
+              allGroupedTabIds.push(...windowTabIds);
+              // Persist undo state incrementally so partial failures leave valid undo data
+              await chrome.storage.session.set({ groupedTabIds: allGroupedTabIds });
+            } catch (groupErr) {
+              console.warn(`Skipped group "${group.name}" in window ${windowId}:`, groupErr.message);
+            }
           }
         }
 
+        if (appliedGroupCount === 0) {
+          sendResponse({ status: "error", message: "No groups could be applied — try again" });
+          return;
+        }
         sendResponse({ status: "done", groupCount: appliedGroupCount });
       } catch (err) {
         console.error("auto_group_tabs failed:", err);

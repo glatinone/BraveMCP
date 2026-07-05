@@ -445,75 +445,176 @@ export interface TabGroup {
   tabIds: number[];
 }
 
+// Last-resort fallback: clean domain clustering. Deliberately NEVER emits a
+// catch-all group ("Other" spam regression) — beyond the cap, tabs simply
+// stay ungrouped, which is visually calmer than a meaningless bucket.
 export function clusterTabsIntoGroupsFallback(tabs: TabInput[]): TabGroup[] {
   const domainMap = new Map<string, number[]>();
   for (const tab of tabs) {
-    let domain = "other";
+    let domain = "site";
     try { domain = new URL(tab.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
     if (!domainMap.has(domain)) domainMap.set(domain, []);
     domainMap.get(domain)!.push(tab.tabId);
   }
   const sorted = [...domainMap.entries()].sort((a, b) => b[1].length - a[1].length);
-  const MAX_GROUPS = 6;
-  if (sorted.length <= MAX_GROUPS) {
-    return sorted.map(([domain, tabIds], i) => ({
-      name: domain,
-      color: GROUP_COLORS[i % GROUP_COLORS.length],
-      tabIds,
-    }));
-  }
-  const top = sorted.slice(0, MAX_GROUPS - 1);
-  const otherTabIds = sorted.slice(MAX_GROUPS - 1).flatMap(([, ids]) => ids);
-  return [
-    ...top.map(([domain, tabIds], i) => ({
-      name: domain,
-      color: GROUP_COLORS[i % GROUP_COLORS.length],
-      tabIds,
-    })),
-    { name: "Other", color: GROUP_COLORS[MAX_GROUPS - 1] as TabGroupColor, tabIds: otherTabIds },
-  ];
+  const MAX_GROUPS = 12;
+  return sorted.slice(0, MAX_GROUPS).map(([domain, tabIds], i) => ({
+    name: domain,
+    color: GROUP_COLORS[i % GROUP_COLORS.length],
+    tabIds,
+  }));
 }
 
-function parseGroupsJson(text: string, tabs: TabInput[]): TabGroup[] {
+// ---------------------------------------------------------------------------
+// Self-healing grouping pipeline:
+//   Phase 1 (Generation)  — LLM produces a draft grouping
+//   Phase 2 (Evaluation)  — deterministic scoring engine rates it 0–100
+//   Phase 3 (Self-fixing) — score < 85 feeds the draft + failure reasons back
+//                           into a repair prompt; max 3 attempts, then clean
+//                           domain fallback
+// ---------------------------------------------------------------------------
+
+const QUALITY_THRESHOLD = 85;
+const MAX_GENERATION_ATTEMPTS = 3;
+
+const BLACKLISTED_GROUP_NAMES = /^(other|others|misc|miscellaneous|general|untitled|various|uncategorized|mixed|random|stuff)$/i;
+const PLATFORM_ONLY_NAMES = /^(youtube|github|reddit|google|twitter|x|facebook|instagram|linkedin|gmail|tiktok|medium)(\s*\.?\s*(com|ai|io|net|org|to))?$/i;
+
+export interface GroupQualityReport {
+  score: number;
+  reasons: string[];
+}
+
+// Phase 2: deterministic scoring engine.
+// Structural integrity carries 60% weight, semantic/name quality 40%,
+// fragmentation subtracts up to 30 points, blacklisted names are an
+// instant rejection (score 0).
+export function evaluateGroupQuality(groups: TabGroup[], tabs: TabInput[]): GroupQualityReport {
+  const reasons: string[] = [];
+  if (groups.length === 0) {
+    return { score: 0, reasons: ["Draft contains no groups"] };
+  }
+
+  // Blacklist Name Penalty — instant rejection
+  for (const g of groups) {
+    const name = (g.name || "").trim();
+    if (BLACKLISTED_GROUP_NAMES.test(name)) {
+      return {
+        score: 0,
+        reasons: [`Group name "${name}" is a forbidden catch-all. Every group needs a specific topic name.`],
+      };
+    }
+    if (PLATFORM_ONLY_NAMES.test(name)) {
+      return {
+        score: 0,
+        reasons: [`Group name "${name}" is a bare platform name. Name the group after what those tabs are ABOUT (their topic), not the website.`],
+      };
+    }
+  }
+
+  // Structural Integrity (60%): every input tab mapped exactly once
+  const inputIds = new Set(tabs.map(t => t.tabId));
+  const assignments = new Map<number, number>();
+  for (const g of groups) {
+    for (const id of g.tabIds) {
+      assignments.set(id, (assignments.get(id) || 0) + 1);
+    }
+  }
+  const missing = [...inputIds].filter(id => !assignments.has(id));
+  const duplicated = [...assignments.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+  const foreign = [...assignments.keys()].filter(id => !inputIds.has(id));
+
+  if (missing.length > 0) {
+    const missingIndices = missing
+      .slice(0, 15)
+      .map(id => tabs.findIndex(t => t.tabId === id))
+      .filter(i => i !== -1);
+    reasons.push(`${missing.length} tab(s) are missing from all groups (tab indices: ${missingIndices.join(", ")}). Every index must appear in exactly one group.`);
+  }
+  if (duplicated.length > 0) {
+    reasons.push(`${duplicated.length} tab(s) are assigned to more than one group. Each index must appear exactly once.`);
+  }
+  if (foreign.length > 0) {
+    reasons.push(`${foreign.length} referenced index(es) do not exist in the tab list.`);
+  }
+
+  const structuralErrors = missing.length + duplicated.length * 2 + foreign.length * 2;
+  const structural = 60 * Math.max(0, 1 - structuralErrors / Math.max(1, tabs.length));
+
+  // Semantic Cohesion (40%): names must be real, unique, reasonably sized
+  const nameCounts = new Map<string, number>();
+  for (const g of groups) {
+    const key = (g.name || "").trim().toLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+  }
+  const duplicateNames = [...nameCounts.entries()].filter(([, count]) => count > 1);
+
+  let validNames = 0;
+  for (const g of groups) {
+    const name = (g.name || "").trim();
+    if (name.length >= 3 && name.length <= 48) {
+      validNames++;
+    } else {
+      reasons.push(`Group name "${name}" is ${name.length < 3 ? "too short" : "too long (max 48 chars)"}.`);
+    }
+  }
+  let semantic = 40 * (validNames / groups.length);
+  if (duplicateNames.length > 0) {
+    // Duplicate names are the visual spam this pipeline exists to prevent —
+    // penalize hard enough that a duplicated draft can never pass threshold.
+    semantic = Math.max(0, semantic - 20 * duplicateNames.length);
+    reasons.push(`Duplicate group names: ${duplicateNames.map(([n]) => `"${n}"`).join(", ")}. Merge them into one group each.`);
+  }
+
+  // Fragmentation Penalty (max -30): too many single-tab groups
+  const singles = groups.filter(g => g.tabIds.length === 1).length;
+  const singleFraction = singles / groups.length;
+  let fragmentation = 0;
+  if (groups.length >= 4 && singleFraction > 0.5) {
+    fragmentation = Math.round(30 * Math.min(1, (singleFraction - 0.5) / 0.5));
+    reasons.push(`${singles} of ${groups.length} groups contain only 1 tab. Merge related single-tab groups into broader topical groups (ideal group size: 2-8 tabs).`);
+  }
+
+  const score = Math.max(0, Math.min(100, Math.round(structural + semantic - fragmentation)));
+  return { score, reasons };
+}
+
+// Strict parser: returns null on any failure instead of silently falling back,
+// so the self-fixing loop can react to malformed output.
+function parseGroupsJsonStrict(text: string, tabs: TabInput[]): TabGroup[] | null {
   try {
     const cleanText = text.replace(/```json|```/g, "").trim();
-    // Model sometimes adds preamble text before the JSON array ("Here is the result...").
-    // Extract just the [...] portion so surrounding prose doesn't break parsing.
     const start = cleanText.indexOf("[");
     const end = cleanText.lastIndexOf("]");
-    if (start === -1 || end === -1) return clusterTabsIntoGroupsFallback(tabs);
+    if (start === -1 || end === -1 || end <= start) return null;
     const raw = JSON.parse(cleanText.slice(start, end + 1)) as Array<{ name: string; color: string; indices: number[] }>;
-    return raw.map((g, i) => ({
-      name: g.name || `Group ${i + 1}`,
+    if (!Array.isArray(raw)) return null;
+    const groups = raw.map((g, i) => ({
+      name: (g.name || `Group ${i + 1}`).trim(),
       color: (GROUP_COLORS.includes(g.color as TabGroupColor)
         ? g.color
         : GROUP_COLORS[i % GROUP_COLORS.length]) as TabGroupColor,
-      tabIds: (g.indices || [])
+      tabIds: (Array.isArray(g.indices) ? g.indices : [])
         .map(idx => tabs[idx]?.tabId)
         .filter((id): id is number => id !== undefined),
     })).filter(g => g.tabIds.length > 0);
+    return groups.length > 0 ? groups : null;
   } catch {
-    return clusterTabsIntoGroupsFallback(tabs);
+    return null;
   }
 }
 
-export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[]> {
-  if (tabs.length === 0) return [];
-
-  // Re-read .env on each call so env changes don't require a server restart
-  dotenv.config({ path: join(__dirname, "..", "..", "..", ".env"), override: true });
-  const currentProvider = process.env.AI_PROVIDER || provider;
-  const currentApiKey = process.env.ANTHROPIC_API_KEY || apiKey;
-  const currentOpenrouterKey = process.env.OPENROUTER_API_KEY || openrouterKey;
-  const currentOpenrouterModel = process.env.OPENROUTER_MODEL || openrouterModel;
-
+function buildClusteringPrompt(
+  tabs: TabInput[],
+  repair?: { previousDraft: string; score: number; reasons: string[] }
+): string {
   const tabList = tabs.map((t, i) => {
     let host = t.url;
     try { host = new URL(t.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
     return `${i}: "${t.title}" (${host})`;
   }).join("\n");
 
-  const prompt = `You are a browser tab organizer. Group these tabs by what the person is actually doing — named after the TOPIC or PROJECT, read from the tab title.
+  const base = `You are a browser tab organizer. Group these tabs by what the person is actually doing — named after the TOPIC or PROJECT, read from the tab title.
 
 Tabs (by index, format: "title" (domain)):
 ${tabList}
@@ -527,15 +628,37 @@ STRICT RULES:
    - GitHub repos for MCP tools → "MCP Tools"
    - Google searches about RAG → "RAG Research"
 5. Read the FULL TAB TITLE — it tells you the topic far better than the domain.
-6. Pick one color per group: blue, green, red, yellow, purple, pink, cyan, orange, grey
-7. Every tab index must appear in exactly one group.
-8. Return ONLY a valid JSON array — no explanation, no markdown, no preamble text.
+6. Prefer groups of 2-8 tabs. Only isolate a tab alone when its topic truly matches nothing else.
+7. Pick one color per group: blue, green, red, yellow, purple, pink, cyan, orange, grey
+8. Every tab index must appear in exactly one group.
+9. Return ONLY a valid JSON array — no explanation, no markdown, no preamble text.
 
 Format:
 [{"name": "Low-Level Programming", "color": "blue", "indices": [0, 3, 7]}, {"name": "MCP Tools", "color": "green", "indices": [1, 2]}, ...]`;
 
-  if (currentProvider === "ollama") {
-    try {
+  if (!repair) return base;
+
+  return `${base}
+
+YOUR PREVIOUS ATTEMPT FAILED QUALITY REVIEW (score: ${repair.score}/100, minimum required: ${QUALITY_THRESHOLD}).
+
+Previous draft:
+${repair.previousDraft}
+
+Problems that MUST be fixed:
+${repair.reasons.map(r => `- ${r}`).join("\n")}
+
+Produce a corrected JSON array that fixes EVERY problem listed above. Return ONLY the JSON array.`;
+}
+
+// Phase 1: one LLM generation call. Returns the raw text or null on failure.
+async function callClusteringLLM(
+  prompt: string,
+  cfg: { provider: string; apiKey?: string; openrouterKey?: string; openrouterModel: string },
+  maxTokens: number
+): Promise<string | null> {
+  try {
+    if (cfg.provider === "ollama") {
       const res = await fetch(`${ollamaUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -546,60 +669,111 @@ Format:
           stream: false
         })
       });
-      if (!res.ok) throw new Error(`Ollama tab clustering error: ${await res.text()}`);
+      if (!res.ok) throw new Error(`Ollama error: ${await res.text()}`);
       const data = (await res.json()) as { message: { content: string } };
-      return parseGroupsJson(data.message.content, tabs);
-    } catch (error) {
-      console.error("Ollama tab clustering failed, using domain fallback:", error);
-      return clusterTabsIntoGroupsFallback(tabs);
+      return data.message.content;
     }
-  } else if (currentProvider === "openrouter") {
-    try {
+
+    if (cfg.provider === "openrouter") {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${currentOpenrouterKey || ""}`,
+          "Authorization": `Bearer ${cfg.openrouterKey || ""}`,
           "HTTP-Referer": "https://github.com/glatinone/BraveMCP",
           "X-Title": "BraveMCP Tab Organizer"
         },
         body: JSON.stringify({
-          model: currentOpenrouterModel,
-          max_tokens: 2500,
+          model: cfg.openrouterModel,
+          max_tokens: maxTokens,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }]
         })
       });
-      if (!res.ok) throw new Error(`OpenRouter tab clustering error: ${await res.text()}`);
+      if (!res.ok) throw new Error(`OpenRouter error: ${await res.text()}`);
       const data = (await res.json()) as { choices: { message: { content: string } }[] };
-      return parseGroupsJson(data.choices[0].message.content, tabs);
-    } catch (error) {
-      console.error("OpenRouter tab clustering failed, using domain fallback:", error);
-      return clusterTabsIntoGroupsFallback(tabs);
+      return data.choices[0].message.content;
     }
-  } else {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": currentApiKey || "",
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-3-5-haiku-20241022",
-          max_tokens: 400,
-          messages: [{ role: "user", content: prompt }]
-        })
-      });
-      if (!res.ok) throw new Error(`Anthropic tab clustering error: ${await res.text()}`);
-      const data = (await res.json()) as { content: { text: string }[] };
-      return parseGroupsJson(data.content[0].text, tabs);
-    } catch (error) {
-      console.error("Anthropic tab clustering failed, using domain fallback:", error);
-      return clusterTabsIntoGroupsFallback(tabs);
-    }
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": cfg.apiKey || "",
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-haiku-20241022",
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    if (!res.ok) throw new Error(`Anthropic error: ${await res.text()}`);
+    const data = (await res.json()) as { content: { text: string }[] };
+    return data.content[0].text;
+  } catch (error) {
+    console.error(`[grouping] LLM call failed (${cfg.provider}):`, error);
+    return null;
   }
+}
+
+export async function clusterTabsIntoGroups(tabs: TabInput[]): Promise<TabGroup[]> {
+  if (tabs.length === 0) return [];
+
+  // Re-read .env on each call so env changes don't require a server restart
+  dotenv.config({ path: join(__dirname, "..", "..", "..", ".env"), override: true });
+  const cfg = {
+    provider: process.env.AI_PROVIDER || provider,
+    apiKey: process.env.ANTHROPIC_API_KEY || apiKey,
+    openrouterKey: process.env.OPENROUTER_API_KEY || openrouterKey,
+    openrouterModel: process.env.OPENROUTER_MODEL || openrouterModel,
+  };
+  // Scale output budget with tab count so large tab sets never truncate mid-JSON
+  const maxTokens = Math.min(8000, 1200 + tabs.length * 50);
+
+  let repair: { previousDraft: string; score: number; reasons: string[] } | undefined;
+
+  for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+    const prompt = buildClusteringPrompt(tabs, repair);
+    const rawText = await callClusteringLLM(prompt, cfg, maxTokens);
+    if (rawText === null) {
+      console.error(`[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: generation call failed, retrying`);
+      continue;
+    }
+
+    const groups = parseGroupsJsonStrict(rawText, tabs);
+    if (!groups) {
+      console.error(`[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: output was not a valid JSON group array`);
+      repair = {
+        previousDraft: rawText.substring(0, 2000),
+        score: 0,
+        reasons: ["Output was not a valid JSON array of {name, color, indices} objects. Return ONLY the JSON array."],
+      };
+      continue;
+    }
+
+    const { score, reasons } = evaluateGroupQuality(groups, tabs);
+    console.error(
+      `[grouping] attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}: score=${score}/100 (threshold ${QUALITY_THRESHOLD})` +
+      (reasons.length ? ` — issues: ${reasons.join(" | ")}` : " — clean")
+    );
+
+    if (score >= QUALITY_THRESHOLD) {
+      console.error(`[grouping] accepted draft from attempt ${attempt} with ${groups.length} groups`);
+      return groups;
+    }
+
+    repair = {
+      previousDraft: JSON.stringify(
+        groups.map(g => ({ name: g.name, color: g.color, indices: g.tabIds.map(id => tabs.findIndex(t => t.tabId === id)) }))
+      ).substring(0, 2000),
+      score,
+      reasons,
+    };
+  }
+
+  console.error(`[grouping] all ${MAX_GENERATION_ATTEMPTS} attempts stayed below ${QUALITY_THRESHOLD} — using clean domain fallback`);
+  return clusterTabsIntoGroupsFallback(tabs);
 }
 
 // ---------------------------------------------------------------------------

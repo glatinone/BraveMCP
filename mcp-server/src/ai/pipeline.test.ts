@@ -5,6 +5,7 @@ import {
   extractiveTopicSummary,
   extractiveWeeklyDigest,
   clusterTabsIntoGroupsFallback,
+  evaluateGroupQuality,
 } from "./pipeline.js";
 
 const TABS = `- Title: MCP Tools - Model Context Protocol
@@ -104,4 +105,79 @@ test("clusterTabsIntoGroupsFallback assigns different colors to different groups
   const groups = clusterTabsIntoGroupsFallback(tabs);
   assert.strictEqual(groups.length, 2);
   assert.notStrictEqual(groups[0].color, groups[1].color);
+});
+
+test("clusterTabsIntoGroupsFallback never emits an Other catch-all group", () => {
+  const tabs = Array.from({ length: 30 }, (_, i) => ({
+    tabId: i + 1,
+    url: `https://site${i}.com/page`,
+    title: `Page ${i}`,
+  }));
+  const groups = clusterTabsIntoGroupsFallback(tabs);
+  assert.ok(groups.length <= 12);
+  for (const g of groups) {
+    assert.doesNotMatch(g.name, /^other$/i);
+  }
+});
+
+// --- Scoring engine (Phase 2 of the self-healing grouping pipeline) ---
+
+const SCORE_TABS = [
+  { tabId: 10, url: "https://github.com/microsoft/playwright-mcp", title: "microsoft/playwright-mcp" },
+  { tabId: 11, url: "https://github.com/browserbase/stagehand", title: "browserbase/stagehand SDK" },
+  { tabId: 12, url: "https://reddit.com/r/CompTIA/passed", title: "Passed SEC AI+ : r/CompTIA" },
+  { tabId: 13, url: "https://reddit.com/r/CompTIA/tips", title: "Security+ study tips : r/CompTIA" },
+];
+
+test("evaluateGroupQuality accepts a clean topical grouping", () => {
+  const { score, reasons } = evaluateGroupQuality([
+    { name: "MCP Browser Tools", color: "blue", tabIds: [10, 11] },
+    { name: "CompTIA Certification", color: "red", tabIds: [12, 13] },
+  ], SCORE_TABS);
+  assert.ok(score >= 85, `expected >= 85, got ${score} (${reasons.join("; ")})`);
+});
+
+test("evaluateGroupQuality rejects blacklisted catch-all names with score 0", () => {
+  const { score } = evaluateGroupQuality([
+    { name: "MCP Browser Tools", color: "blue", tabIds: [10, 11] },
+    { name: "Other", color: "grey", tabIds: [12, 13] },
+  ], SCORE_TABS);
+  assert.strictEqual(score, 0);
+});
+
+test("evaluateGroupQuality rejects bare platform names with score 0", () => {
+  const { score } = evaluateGroupQuality([
+    { name: "GitHub", color: "blue", tabIds: [10, 11] },
+    { name: "CompTIA Certification", color: "red", tabIds: [12, 13] },
+  ], SCORE_TABS);
+  assert.strictEqual(score, 0);
+});
+
+test("evaluateGroupQuality penalizes missing and duplicated tabs", () => {
+  const { score, reasons } = evaluateGroupQuality([
+    { name: "MCP Browser Tools", color: "blue", tabIds: [10, 10] },
+  ], SCORE_TABS);
+  assert.ok(score < 85, `expected < 85, got ${score}`);
+  assert.ok(reasons.some(r => /missing/i.test(r)));
+  assert.ok(reasons.some(r => /more than one group/i.test(r)));
+});
+
+test("evaluateGroupQuality penalizes duplicate group names", () => {
+  const { score, reasons } = evaluateGroupQuality([
+    { name: "CompTIA Certification", color: "blue", tabIds: [10, 11] },
+    { name: "CompTIA Certification", color: "red", tabIds: [12, 13] },
+  ], SCORE_TABS);
+  assert.ok(score < 85, `expected < 85, got ${score}`);
+  assert.ok(reasons.some(r => /duplicate group names/i.test(r)));
+});
+
+test("evaluateGroupQuality applies fragmentation penalty for single-tab spam", () => {
+  const { score, reasons } = evaluateGroupQuality([
+    { name: "Playwright MCP Server", color: "blue", tabIds: [10] },
+    { name: "Stagehand SDK", color: "green", tabIds: [11] },
+    { name: "SEC AI Exam Result", color: "red", tabIds: [12] },
+    { name: "Security Plus Study", color: "yellow", tabIds: [13] },
+  ], SCORE_TABS);
+  assert.ok(score < 100, `expected fragmentation to reduce score, got ${score}`);
+  assert.ok(reasons.some(r => /only 1 tab/i.test(r)));
 });
