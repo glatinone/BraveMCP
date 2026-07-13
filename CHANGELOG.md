@@ -7,20 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-13
+
 ### Added
 - **Test Suite**: Automated tests via Node's built-in test runner (run with tsx, no new deps) covering the extractive AI summaries and the SQLite storage layer (temp-DB isolated). CI runs `npm test` after build on Node 20.
 - **Demo Visual**: Self-contained SVG mockup of a Claude conversation embedded in the README, plus `docs/RECORDING.md` with instructions for recording a real GIF.
 - **ESLint**: Flat-config ESLint 9 + typescript-eslint setup with `npm run lint` and `npm run typecheck` scripts; CI now runs type-check and lint before build.
 - **Health Check**: `/api/status` now reports live SQLite, ChromaDB, and Ollama reachability instead of a static `ok`.
+- **Tab grouping**: `get_all_open_tabs` and `apply_tab_grouping` tools, backed by a critic engine (`evaluateGroupQuality`, minimum score 90/100) that rejects domain-name or catch-all group names before they reach the browser.
 
 ### Changed
 - **AI Fallbacks**: When no LLM is available, `summarize_open_tabs`, `summarize_research_topic`, and `generate_weekly_digest` now build genuine extractive summaries from real data (domain grouping, source listings, data-driven digests) instead of returning canned text.
-- **Docs**: Rewrote the README for clarity; cleaned up CONTRIBUTING and CLAUDE.md; moved the internal Antigravity master prompt into `docs/`.
+- **Docs**: Rewrote the README for clarity; cleaned up CONTRIBUTING and CLAUDE.md; moved the internal Antigravity master prompt into `docs/`. Fixed a placeholder clone URL, corrected the MCP tool count (13 → 16, two tab-grouping tools were undocumented), and added a Security section.
 
 ### Fixed
 - **MCP stdio**: Pinned dotenv to v16 to stop stdout pollution that corrupted the JSON-RPC channel.
 - **Dual-process state**: Tab-dependent tools fall back to SQLite when in-memory extension state is empty; the second server instance no longer crashes on a port conflict.
 - **Error handling**: Tool handlers now return readable tool-execution errors to Claude instead of raw protocol errors.
+
+### Security
+- **HTTP bridge CORS lockdown**: The Express bridge on `localhost:3747` previously used `cors()` with no origin restriction, meaning any website open in the browser could POST directly to `/api/capture`, `/api/note`, `/api/stage-groups`, etc. and write attacker-controlled content into the local memory database or stage arbitrary tab groups — a plain `localhost` bind offers no same-origin protection against a browser tab's own JavaScript. Replaced with an explicit `Origin` allowlist (`src/security/origin.ts`) that only permits `chrome-extension://`/`moz-extension://` origins or requests with no `Origin` header (non-browser clients); every other origin is rejected with 403, including at the CORS-preflight stage so the browser never sends the real request. Verified against a live server with curl: a spoofed `https://evil.com` origin is blocked, the extension's `chrome-extension://` origin and no-origin requests both pass.
 
 ## [0.1.0] - 2026-06-14
 

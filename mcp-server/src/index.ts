@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
-import cors from "cors";
+import { isAllowedOrigin } from "./security/origin.js";
 import {
   db,
   runMigrations,
@@ -53,7 +53,7 @@ let activeTab: { url: string; title: string } | null = null;
 const server = new Server(
   {
     name: "brave-mcp-server",
-    version: "0.1.0",
+    version: "0.2.0",
   },
   {
     capabilities: {
@@ -901,8 +901,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 // Setup Express HTTP Bridge
+//
+// This server binds to localhost, which any browser tab can reach directly —
+// CORS is the only barrier between an arbitrary website's JavaScript and
+// endpoints that write into the local memory DB (poisoning content Claude
+// later treats as trusted research) or stage tab groups. Only the extension
+// itself (chrome-extension://.../moz-extension://...) or a same-machine,
+// non-browser client (no Origin header) is allowed through; every other
+// Origin is rejected outright, including at the CORS-preflight stage so the
+// browser never sends the real request.
 const app = express();
-app.use(cors());
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!isAllowedOrigin(origin)) {
+    console.error(`Blocked cross-origin request from untrusted origin: ${origin}`);
+    res.status(403).json({ error: "Origin not allowed" });
+    return;
+  }
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: "15mb" }));
 
 // Lightweight reachability check used by the health endpoint.

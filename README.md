@@ -1,7 +1,7 @@
 # BraveMCP — Your Browser Memory, Accessible by Claude
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.1.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.2.0-green.svg)](CHANGELOG.md)
 [![Local First](https://img.shields.io/badge/local--first-yes-violet.svg)](#)
 [![MCP Compliant](https://img.shields.io/badge/MCP-compliant-orange.svg)](https://modelcontextprotocol.io)
 
@@ -58,7 +58,7 @@ Claude Desktop
 - **HTTP Bridge** — Express server on port `3747`, runs inside the MCP server process to receive extension payloads.
 - **Storage** — SQLite (FTS5 full-text search) + ChromaDB (local vector embeddings). Nothing leaves your machine.
 - **AI Pipeline** — Ollama (`llama3.2` / `nomic-embed-text`) for local summarization and embeddings, with Anthropic API as fallback.
-- **MCP Server** — Exposes 13 tools to Claude Desktop over stdio.
+- **MCP Server** — Exposes 16 tools to Claude Desktop over stdio.
 
 ---
 
@@ -75,7 +75,7 @@ Claude Desktop
 ### Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/BraveMCP.git
+git clone https://github.com/glatinone/BraveMCP.git
 cd BraveMCP
 npm run setup
 ```
@@ -118,7 +118,7 @@ ChromaDB runs at `http://localhost:8000`. Without it, BraveMCP falls back to SQL
 
 ## Available MCP Tools
 
-Once connected, Claude can call any of these 13 tools:
+Once connected, Claude can call any of these 16 tools:
 
 | Tool | What it does |
 |------|-------------|
@@ -136,6 +136,8 @@ Once connected, Claude can call any of these 13 tools:
 | `get_research_sessions` | Auto-clustered browsing sessions by domain/topic |
 | `generate_weekly_digest` | Weekly summary of your browsing and research gaps |
 | `suggest_tab_cleanup` | Recommends tabs to close, archive, or keep |
+| `get_all_open_tabs` | Get the live, id-tagged array of every open tab — call first when organizing tabs |
+| `apply_tab_grouping` | Apply semantic tab groups to the browser, validated by a critic engine (min score 90/100) before staging |
 
 ---
 
@@ -144,6 +146,21 @@ Once connected, Claude can call any of these 13 tools:
 The extension auto-syncs tab visits in the background. For full page content (text body + AI summary), click **"Capture Content"** in the extension popup. This sends the page body to the MCP server, which stores it in SQLite and generates an AI summary and vector embedding.
 
 Claude can also save a page directly: `capture_current_page(url, title, content, summary)`.
+
+---
+
+## Security
+
+The HTTP bridge listens on `localhost:3747` for the extension only — but a
+plain `localhost` server is reachable by *any* browser tab's JavaScript, not
+just the extension. The bridge enforces an `Origin` allowlist so that only
+the extension itself (`chrome-extension://…` / `moz-extension://…`) or a
+same-machine, non-browser client (no `Origin` header, e.g. a CLI script) can
+call it. An ordinary website has no way to spoof its `Origin` header, so it
+cannot reach `/api/capture`, `/api/note`, `/api/stage-groups`, etc. — closing
+off a memory-poisoning path where a malicious page could otherwise plant
+content into the local database that Claude later treats as trusted research.
+See `mcp-server/src/security/origin.ts`.
 
 ---
 
