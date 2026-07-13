@@ -116,6 +116,24 @@ ChromaDB runs at `http://localhost:8000`. Without it, BraveMCP falls back to SQL
 
 ---
 
+## Configuration
+
+`npm run setup` creates a `.env` file at the project root from `.env.example`.
+The MCP server reads it from there (not from `mcp-server/.env`), and re-reads
+it on every AI call so changes take effect without a restart.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AI_PROVIDER` | `ollama` | `ollama` for local summarization/embeddings, or `anthropic` to use the Anthropic API instead |
+| `OLLAMA_URL` | `http://localhost:11434` | Where the server looks for a running Ollama instance |
+| `ANTHROPIC_API_KEY` | — | Required only if `AI_PROVIDER=anthropic`, or as a fallback when Ollama is unreachable |
+
+Without Ollama or an Anthropic key, the AI pipeline falls back to genuine
+extractive summaries built from real data (domain grouping, source listings)
+instead of failing outright.
+
+---
+
 ## Available MCP Tools
 
 Once connected, Claude can call any of these 16 tools:
@@ -164,6 +182,28 @@ See `mcp-server/src/security/origin.ts`.
 
 ---
 
+## Troubleshooting
+
+**Claude Desktop doesn't show the tools / "server disconnected"**
+Use an absolute path to `mcp-server/dist/index.js` in `claude_desktop_config.json` — a relative path fails silently. Run `npm run build` first so `dist/` actually exists, then fully quit and reopen Claude Desktop (a config reload isn't enough).
+
+**Port 3747 already in use**
+Another BraveMCP instance (or a previous one that didn't shut down cleanly) is holding the HTTP bridge port. Find and stop it (`netstat -ano | findstr 3747` on Windows, then `taskkill /PID <pid> /F`), or restart your machine if unsure what's holding it.
+
+**Semantic search feels weak / falls back to keyword search**
+That means ChromaDB isn't reachable at `http://localhost:8000`. Run `chroma run --path ./storage/chroma` in a separate terminal and keep it running. This is optional — keyword search over SQLite still works without it.
+
+**Summaries look generic / templated**
+No Ollama and no `ANTHROPIC_API_KEY` were found, so the pipeline is using its extractive fallback (real data, no LLM). Either run `ollama pull llama3.2 && ollama pull nomic-embed-text` and start Ollama, or set `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `.env` (see [Configuration](#configuration)).
+
+**Extension isn't capturing pages**
+Confirm it's loaded at `brave://extensions` with Developer mode on, and that you clicked **Load unpacked** on the `/extension` folder specifically (not the repo root). After pulling new commits, click the extension's reload icon — Manifest V3 service workers don't hot-reload.
+
+**A request to `/api/...` gets a 403**
+That's expected outside the extension — the HTTP bridge only accepts `chrome-extension://`/`moz-extension://` origins (see [Security](#security)). Calling it from `curl` or a browser tab's console will always 403.
+
+---
+
 ## Project Structure
 
 ```
@@ -197,7 +237,7 @@ BraveMCP/
 - [x] Phase 3 — Browser extension (Manifest V3)
 - [x] Phase 4 — Vector search + AI pipeline (Ollama / Anthropic fallback)
 - [x] Phase 5 — Advanced tools (digest, sessions, forgotten content, tab cleanup)
-- [ ] Phase 6 — Polish + public release
+- [x] Phase 6 — Polish + public release (v0.2.0: tests, CI, lint, security hardening)
 
 ---
 

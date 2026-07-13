@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Docs**: README Configuration section documenting `.env` variables (`AI_PROVIDER`, `OLLAMA_URL`, `ANTHROPIC_API_KEY`) and where the server reads them from. README Troubleshooting section covering the port-3747 conflict, Claude Desktop not detecting the server, ChromaDB fallback behavior, generic-looking summaries, and extension capture issues.
+
+### Changed
+- **Docs**: Roadmap checklist now reflects that Phase 6 (polish + public release) actually shipped in v0.2.0.
+
 ## [0.2.0] - 2026-07-13
 
 ### Added
