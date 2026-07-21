@@ -180,6 +180,9 @@ off a memory-poisoning path where a malicious page could otherwise plant
 content into the local database that Claude later treats as trusted research.
 See `mcp-server/src/security/origin.ts`.
 
+See [SECURITY.md](SECURITY.md) for the full threat model and how to report a
+vulnerability.
+
 ---
 
 ## Troubleshooting

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Docs**: README Configuration section documenting `.env` variables (`AI_PROVIDER`, `OLLAMA_URL`, `ANTHROPIC_API_KEY`) and where the server reads them from. README Troubleshooting section covering the port-3747 conflict, Claude Desktop not detecting the server, ChromaDB fallback behavior, generic-looking summaries, and extension capture issues.
+- **Docs**: `SECURITY.md` describing the local-first threat model (HTTP bridge origin allowlist, local-only storage, how AI provider keys are used) and how to report a vulnerability privately.
 
 ### Changed
 - **Docs**: Roadmap checklist now reflects that Phase 6 (polish + public release) actually shipped in v0.2.0.
