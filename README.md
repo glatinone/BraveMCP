@@ -257,6 +257,7 @@ BraveMCP/
 - [x] Phase 4 — Vector search + AI pipeline (Ollama / Anthropic fallback)
 - [x] Phase 5 — Advanced tools (digest, sessions, forgotten content, tab cleanup)
 - [x] Phase 6 — Polish + public release (v0.2.0: tests, CI, lint, security hardening)
+- [x] Phase 7 — Origin-trust hardening (v0.3.0: extension-origin pinning via trust-on-first-use)
 
 ---
 

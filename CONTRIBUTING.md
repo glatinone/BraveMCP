@@ -39,7 +39,7 @@ Before opening a PR, make sure `npm run typecheck`, `npm run lint`, and
 - **SQLite**: Keep schema migrations clean. All schema updates must be added as a new migration step in the `migrations` array inside `mcp-server/src/storage/database.ts`.
 
 ## 🚀 Pull Request Process
-1. Fork the repository and create your branch from `main`.
+1. Fork the repository and create your branch from `master`.
 2. Implement your feature or bug fix.
 3. Verify compilation and tests pass successfully.
 4. Submit your pull request with a descriptive title and detailed notes of the changes.
