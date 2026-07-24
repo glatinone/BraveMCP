@@ -3,5 +3,6 @@ dist/
 scratch/
 *.db
 *.log
+storage/trusted-origin.json
 .env
 .env.local

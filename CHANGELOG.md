@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-24
+
+### Security
+- **Extension-origin pinning (trust-on-first-use)**: the HTTP bridge's `Origin`
+  allowlist previously matched by scheme only (`chrome-extension://…` /
+  `moz-extension://…`), which means *any* installed browser extension — not
+  just BraveMCP's own — presents an equally legitimate origin of that shape
+  and could talk to `/api/capture`, `/api/note`, `/api/stage-groups`, etc.
+  exactly as freely as the real extension. This is the same "unauthenticated
+  internal channel trusts any sender" gap disclosed in Claude for Chrome's
+  extension-messaging vulnerability (2026-07), applied to a directly
+  comparable architecture (extension + local backend + sensitive browsing
+  data). Fixed by pinning the specific extension origin seen on first contact
+  (`storage/trusted-origin.json`, git-ignored) and rejecting every other
+  extension-shaped origin afterward — no user configuration required, since a
+  browser can't be tricked into lying about which extension sent a request.
+  New `decideOrigin`/`loadPinnedOrigin`/`savePinnedOrigin` in
+  `mcp-server/src/security/origin.ts`. Verified against a live server with
+  curl: the first extension origin to connect is trusted and pinned, that
+  same origin keeps working across a server restart, and a second,
+  different extension origin gets 403 even though it matches the scheme
+  check. 7 new tests; 35 tests passing (was 28).
+
 ### Added
-- **Docs**: README Configuration section documenting `.env` variables (`AI_PROVIDER`, `OLLAMA_URL`, `ANTHROPIC_API_KEY`) and where the server reads them from. README Troubleshooting section covering the port-3747 conflict, Claude Desktop not detecting the server, ChromaDB fallback behavior, generic-looking summaries, and extension capture issues.
+- **Docs**: README Configuration section documenting `.env` variables (`AI_PROVIDER`, `OLLAMA_URL`, `ANTHROPIC_API_KEY`) and where the server reads them from. README Troubleshooting section covering the port-3747 conflict, Claude Desktop not detecting the server, ChromaDB fallback behavior, generic-looking summaries, and extension capture issues, plus a new entry for re-pinning after the trusted-origin change above.
 - **Docs**: `SECURITY.md` describing the local-first threat model (HTTP bridge origin allowlist, local-only storage, how AI provider keys are used) and how to report a vulnerability privately.
 
 ### Changed

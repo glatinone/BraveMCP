@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
-import { isAllowedOrigin } from "./security/origin.js";
+import { decideOrigin, loadPinnedOrigin, savePinnedOrigin } from "./security/origin.js";
 import {
   db,
   runMigrations,
@@ -53,7 +53,7 @@ let activeTab: { url: string; title: string } | null = null;
 const server = new Server(
   {
     name: "brave-mcp-server",
-    version: "0.2.0",
+    version: "0.3.0",
   },
   {
     capabilities: {
@@ -902,21 +902,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Setup Express HTTP Bridge
 //
-// This server binds to localhost, which any browser tab can reach directly —
-// CORS is the only barrier between an arbitrary website's JavaScript and
-// endpoints that write into the local memory DB (poisoning content Claude
-// later treats as trusted research) or stage tab groups. Only the extension
-// itself (chrome-extension://.../moz-extension://...) or a same-machine,
-// non-browser client (no Origin header) is allowed through; every other
-// Origin is rejected outright, including at the CORS-preflight stage so the
-// browser never sends the real request.
+// This server binds to localhost, which any browser tab (or any other
+// installed extension) can reach directly. Origin scheme-checking alone only
+// proves a request came from *some* extension, not from BraveMCP's own — so
+// the specific origin seen on first contact is pinned (TOFU) and every
+// later request must match it exactly; see security/origin.ts for why. A
+// same-machine, non-browser client (no Origin header) is still allowed
+// through unconditionally. Every other request is rejected outright,
+// including at the CORS-preflight stage so the browser never sends the real
+// request.
 const app = express();
+let pinnedOrigin = loadPinnedOrigin();
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (!isAllowedOrigin(origin)) {
-    console.error(`Blocked cross-origin request from untrusted origin: ${origin}`);
+  const decision = decideOrigin(origin, pinnedOrigin);
+  if (!decision.allow) {
+    console.error(
+      `Blocked cross-origin request from untrusted origin: ${origin}` +
+        (pinnedOrigin ? ` (expected ${pinnedOrigin} — delete storage/trusted-origin.json to re-pin)` : "")
+    );
     res.status(403).json({ error: "Origin not allowed" });
     return;
+  }
+  if (decision.pinnedOrigin && decision.pinnedOrigin !== pinnedOrigin) {
+    pinnedOrigin = decision.pinnedOrigin;
+    savePinnedOrigin(pinnedOrigin);
+    console.error(`Trusted new extension origin: ${pinnedOrigin}`);
   }
   if (origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);

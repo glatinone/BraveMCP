@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BraveMCP",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local Browser Memory system that connects browsing activity to Claude Desktop via MCP.",
   "permissions": [
     "tabs",

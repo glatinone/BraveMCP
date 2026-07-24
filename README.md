@@ -1,7 +1,7 @@
 # BraveMCP — Your Browser Memory, Accessible by Claude
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.2.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.3.0-green.svg)](CHANGELOG.md)
 [![Local First](https://img.shields.io/badge/local--first-yes-violet.svg)](#)
 [![MCP Compliant](https://img.shields.io/badge/MCP-compliant-orange.svg)](https://modelcontextprotocol.io)
 
@@ -171,13 +171,26 @@ Claude can also save a page directly: `capture_current_page(url, title, content,
 
 The HTTP bridge listens on `localhost:3747` for the extension only — but a
 plain `localhost` server is reachable by *any* browser tab's JavaScript, not
-just the extension. The bridge enforces an `Origin` allowlist so that only
-the extension itself (`chrome-extension://…` / `moz-extension://…`) or a
+just the extension, and by *any other installed browser extension*, not just
+this one. The bridge enforces an `Origin` allowlist so that only an
+extension origin (`chrome-extension://…` / `moz-extension://…`) or a
 same-machine, non-browser client (no `Origin` header, e.g. a CLI script) can
 call it. An ordinary website has no way to spoof its `Origin` header, so it
 cannot reach `/api/capture`, `/api/note`, `/api/stage-groups`, etc. — closing
 off a memory-poisoning path where a malicious page could otherwise plant
 content into the local database that Claude later treats as trusted research.
+
+A scheme check alone isn't enough, though: every installed extension gets an
+equally legitimate `chrome-extension://<its-own-id>` origin, so it would let
+a malicious or compromised *neighbor* extension talk to the bridge exactly as
+freely as BraveMCP's own extension. The bridge closes this by pinning the
+specific extension origin it sees on first contact (trust-on-first-use, the
+same model SSH uses for host keys — `storage/trusted-origin.json`) and
+rejecting every other extension origin afterward, with zero configuration.
+If you ever need to re-pin (moved the repo to a new path, so the unpacked
+extension gets a new ID), delete `storage/trusted-origin.json` and restart
+the MCP server.
+
 See `mcp-server/src/security/origin.ts`.
 
 See [SECURITY.md](SECURITY.md) for the full threat model and how to report a
@@ -205,6 +218,9 @@ Confirm it's loaded at `brave://extensions` with Developer mode on, and that you
 **A request to `/api/...` gets a 403**
 That's expected outside the extension — the HTTP bridge only accepts `chrome-extension://`/`moz-extension://` origins (see [Security](#security)). Calling it from `curl` or a browser tab's console will always 403.
 
+**Extension worked before, now every request 403s ("Origin not allowed")**
+The bridge pins the extension's origin on first contact and only trusts that exact origin afterward (see [Security](#security)). If you moved/re-cloned the repo (the unpacked extension gets a new ID at a new path) or loaded a second copy of the extension, the pinned origin no longer matches. Delete `storage/trusted-origin.json` and restart the MCP server to re-pin against whichever extension talks to it next.
+
 ---
 
 ## Project Structure
@@ -227,7 +243,7 @@ BraveMCP/
 │   └── tsconfig.json
 ├── scripts/
 │   └── setup.js            # One-command setup script
-├── storage/                # SQLite DB lives here (git-ignored)
+├── storage/                # SQLite DB + trusted-origin.json (git-ignored)
 └── package.json            # Root: runs setup script
 ```
 

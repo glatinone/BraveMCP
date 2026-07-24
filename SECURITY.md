@@ -13,10 +13,14 @@ storage (SQLite / ChromaDB) all run on your own machine. Nothing is sent to a re
 BraveMCP-operated server.
 
 - **HTTP bridge (`localhost:3747`).** A plain `localhost` bind is reachable by any
-  browser tab's JavaScript, not just the extension. The bridge enforces an `Origin`
-  allowlist (`chrome-extension://…` / `moz-extension://…`, or no `Origin` header at
-  all for a same-machine non-browser client) so an ordinary website cannot call
-  `/api/capture`, `/api/note`, `/api/stage-groups`, or any other route. See
+  browser tab's JavaScript, not just the extension, and by any other installed
+  browser extension, not just this one. The bridge enforces an `Origin` allowlist
+  (`chrome-extension://…` / `moz-extension://…`, or no `Origin` header at all for a
+  same-machine non-browser client) so an ordinary website cannot call
+  `/api/capture`, `/api/note`, `/api/stage-groups`, or any other route. Scheme
+  matching alone would still trust any *other* installed extension equally, so the
+  bridge additionally pins the specific extension origin seen on first contact
+  (trust-on-first-use) and rejects every other extension origin afterward. See
   [Security](README.md#security) in the README and `mcp-server/src/security/origin.ts`.
 - **Captured browsing data** is stored locally (SQLite, and ChromaDB if running) and
   is only ever read back by the MCP server you configured in your own AI client. It
