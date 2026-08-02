@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "chroma": "node mcp-server/node_modules/chromadb/dist/cli.mjs run --path ./storage/chroma"
   }
 }
