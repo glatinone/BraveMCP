@@ -44,3 +44,9 @@ jobs:
       run: |
         cd mcp-server
         npm test
+
+    - name: Security Audit (npm audit)
+      continue-on-error: true
+      run: |
+        cd mcp-server
+        npm audit --audit-level=high
