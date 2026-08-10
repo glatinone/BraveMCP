@@ -11,6 +11,14 @@
 
 ---
 
+## 📋 TL;DR
+
+**Problem:** Claude has no memory of your browsing — you re-explain context every session.
+**Solution:** BraveMCP is a browser extension + local MCP server that captures pages, bookmarks, and highlights, then lets Claude search that memory directly.
+**Stack:** Manifest V3 extension → Express bridge → MCP server → SQLite (FTS5) + ChromaDB. Fully local, no cloud sync.
+
+---
+
 ## Demo
 
 <!-- To use a real screen recording, record per docs/RECORDING.md, save it to
