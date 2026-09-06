@@ -83,7 +83,7 @@ async function checkServices() {
   if (isChromaRunning) {
     console.log("🟢 ChromaDB: Detected running on port 8000.");
   } else {
-    console.log("🔴 ChromaDB: Not detected on port 8000. Start it using: chroma run --path ./storage/chroma");
+    console.log("🔴 ChromaDB: Not detected on port 8000. Start it with: npm run chroma");
   }
 
   if (isMcpHttpRunning) {
@@ -107,8 +107,7 @@ async function checkServices() {
   console.log("     }");
   console.log("   }");
   console.log("\n2. Start local ChromaDB vector database:");
-  console.log("   pip install chromadb");
-  console.log("   chroma run --path ./storage/chroma");
+  console.log("   npm run chroma");
   console.log("\n3. Load the browser extension:");
   console.log("   - Open Brave or Chrome at chrome://extensions/");
   console.log("   - Toggle 'Developer mode' on.");
