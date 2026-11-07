@@ -13,7 +13,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.3",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "better-sqlite3": "^12.10.1",
     "chromadb": "^3.4.3",
     "dotenv": "^16.4.5",
